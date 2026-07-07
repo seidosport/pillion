@@ -6,6 +6,14 @@ import ImageIO
 import ExternalAccessory
 import Metal
 import os.log
+import SmartDeviceLink   // spike: prove the patched SDL fork links into the extension target
+
+// spike: never-run reference so the linker actually pulls in SmartDeviceLink. Do NOT wire streaming.
+@inline(never) private func _sdlLinkProof() {
+    if ProcessInfo.processInfo.environment["__NEVER__"] == "1" {
+        _ = SDLManager.self
+    }
+}
 
 /// Extension logging that survives `log collect`: NSLog content is privacy-redacted (<private>) in
 /// collected archives, so use os_log with %{public} to keep the FPS/ack stats readable.
