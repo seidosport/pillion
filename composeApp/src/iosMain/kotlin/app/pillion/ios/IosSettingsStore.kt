@@ -36,6 +36,14 @@ class IosSettingsStore : SettingsStore {
 
     override fun setSelectedBikeId(id: String) {
         defaults.setObject(id, forKey = BIKE_KEY)
+        // Tell the out-of-process broadcast extension which path to run when the user hits "Start
+        // mirroring": the SDL/Motorize bike → SDL video stream over iAP2/USB, anything else → NaviLite.
+        // Written here (at selection, well before broadcastStarted) into the shared App Group the
+        // extension reads. iAP2 by default so the on-bike tester never touches host/port.
+        NSUserDefaults(suiteName = APP_GROUP)?.apply {
+            setBool(id == SDL_BIKE_ID, forKey = "stream.sdl")
+            setBool(false, forKey = "sdl.tcp")
+        }
     }
 
     private companion object {
@@ -43,5 +51,7 @@ class IosSettingsStore : SettingsStore {
         const val DASH_ENABLED_KEY = "dash_enabled"
         const val DASH_RES_KEY = "dash_resolution"
         const val BIKE_KEY = "selected_bike_id"
+        const val APP_GROUP = "group.app.pillion"
+        const val SDL_BIKE_ID = "yamaha-sdl"   // SdlProfile.id
     }
 }

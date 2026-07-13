@@ -3,7 +3,6 @@ package app.pillion
 import androidx.compose.ui.window.ComposeUIViewController
 import app.pillion.core.MirrorController
 import app.pillion.core.PreviewController
-import app.pillion.core.UnsupportedController
 import app.pillion.core.headunit.registerBuiltInHeadUnits
 import app.pillion.ios.IosSettingsStore
 import app.pillion.ui.App
@@ -22,13 +21,12 @@ fun MainViewController(
     registerBuiltInHeadUnits()
     return ComposeUIViewController {
         App(
-            controllerFor = { profile ->
-                if (profile.requiresUsb) {
-                    sdlController ?: UnsupportedController("USB / SDL is unavailable on this device")
-                } else {
-                    naviliteController
-                }
-            },
+            // Spike (spike/ios-sdl-extension): SDL now streams from the SAME broadcast extension as
+            // NaviLite (so it can mirror the foreground app, e.g. Waze, while Pillion is backgrounded —
+            // the in-app CarWindow `sdlController` can't). Both profiles route to the broadcast
+            // controller; the extension picks SDL vs NaviLite from the App Group flag written at bike
+            // selection. `sdlController` (in-app CarWindow SdlSession) is left wired but unused here.
+            controllerFor = { _ -> naviliteController },
             updateChecker = null,
             settingsStore = IosSettingsStore(),
         )
