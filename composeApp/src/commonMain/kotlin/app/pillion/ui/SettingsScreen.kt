@@ -77,6 +77,7 @@ internal fun SettingsScreen(
     onDisableDash: () -> Unit = {},
     bikeName: String = "",
     onChangeBike: () -> Unit = {},
+    onShareDiagnostics: (() -> Unit)? = null,
     update: UpdateInfo?,
     onBack: () -> Unit,
 ) {
@@ -249,6 +250,10 @@ internal fun SettingsScreen(
             LinkRow("Report an issue") { uriHandler.openUri("$REPO_URL/issues") }
             GroupDivider()
             LinkRow("Changelog") { uriHandler.openUri("$REPO_URL/blob/main/CHANGELOG.md") }
+            if (onShareDiagnostics != null) {
+                GroupDivider()
+                LinkRow("Share diagnostics", onShareDiagnostics)
+            }
         }
 
         Spacer(Modifier.height(28.dp))

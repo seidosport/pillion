@@ -34,7 +34,42 @@ final class BroadcastBridge: ObservableObject {
     }
 
     func makeViewController() -> UIViewController {
-        MainViewControllerKt.MainViewController(naviliteController: controller, sdlController: sdlController)
+        MainViewControllerKt.MainViewController(
+            naviliteController: controller,
+            sdlController: sdlController,
+            onShareDiagnostics: { [weak self] in self?.shareDiagnostics() })
+    }
+
+    /// Settings → "Share diagnostics": hand the extension's App Group log(s) to the iOS share sheet so a
+    /// remote tester (no Mac/Xcode) can send them to us. The broadcast extension writes sdl_ext_log.txt
+    /// (and any other *.txt/*.log) into the shared container; the main app reads the same container.
+    private func shareDiagnostics() {
+        guard let container = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: "group.app.pillion") else { return }
+        let files = ((try? FileManager.default.contentsOfDirectory(
+            at: container, includingPropertiesForKeys: nil)) ?? [])
+            .filter { ["txt", "log"].contains($0.pathExtension.lowercased()) }
+        guard let top = Self.topViewController() else { return }
+        guard !files.isEmpty else {
+            let a = UIAlertController(title: "No diagnostics yet",
+                                      message: "Run a mirroring session first, then share the log.",
+                                      preferredStyle: .alert)
+            a.addAction(UIAlertAction(title: "OK", style: .default))
+            top.present(a, animated: true)
+            return
+        }
+        let share = UIActivityViewController(activityItems: files, applicationActivities: nil)
+        share.popoverPresentationController?.sourceView = top.view   // iPad needs an anchor
+        share.popoverPresentationController?.sourceRect =
+            CGRect(x: top.view.bounds.midX, y: top.view.bounds.midY, width: 0, height: 0)
+        top.present(share, animated: true)
+    }
+
+    private static func topViewController() -> UIViewController? {
+        let scene = UIApplication.shared.connectedScenes.first { $0.activationState == .foregroundActive } as? UIWindowScene
+        var vc = (scene?.windows.first { $0.isKeyWindow } ?? scene?.windows.first)?.rootViewController
+        while let presented = vc?.presentedViewController { vc = presented }
+        return vc
     }
 
     /// Called by `BroadcastPickerHost` once the (hidden) picker view exists.
