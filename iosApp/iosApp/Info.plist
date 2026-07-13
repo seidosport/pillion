@@ -74,6 +74,9 @@
 		<string>com.smartdevicelink.prot28</string>
 		<string>com.smartdevicelink.prot29</string>
 		<string>com.smartdevicelink.multisession</string>
+		<!-- SDL's LegacyProtocolString — SDLIAPTransport NSAsserts (SIGABRT) at startWithReadyHandler
+		     if this is absent, even though we never use the Ford transport. See SDLIAPConstants.m. -->
+		<string>com.ford.sync.prot0</string>
 	</array>
 </dict>
 </plist>
