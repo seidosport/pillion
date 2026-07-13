@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 /// A NaviLite frame read off the wire.
 struct NaviFrame { let svc: Int; let payload: [UInt8] }
@@ -26,7 +27,24 @@ enum BroadcastConfig {
 
     /// App Group shared with the container app so the extension can read the user's live Settings
     /// (the extension is a separate process and can't see the app's own UserDefaults).
-    static let appGroup = "group.app.pillion"
+    /// Read the *granted* group id from our own entitlement at runtime: SideStore (free Apple ID) may
+    /// rewrite "group.app.pillion" to a team-scoped id, and both app + appex must agree on whatever it
+    /// became. Falls back to the literal if the entitlement can't be read.
+    static let appGroup: String = grantedAppGroup() ?? "group.app.pillion"
+    // ponytail: SecTask* is macOS-public but iOS-SPI (not in the iOS SDK's importable headers), so dlsym
+    // it from the linked Security.framework. Best-effort — nil → caller uses the literal group id.
+    static func grantedAppGroup() -> String? {
+        typealias CreateFn = @convention(c) (CFAllocator?) -> Unmanaged<AnyObject>?
+        typealias CopyFn = @convention(c) (AnyObject, CFString, UnsafeMutableRawPointer?) -> Unmanaged<AnyObject>?
+        let rtldDefault = UnsafeMutableRawPointer(bitPattern: -2)
+        guard let cSym = dlsym(rtldDefault, "SecTaskCreateFromSelf"),
+              let vSym = dlsym(rtldDefault, "SecTaskCopyValueForEntitlement"),
+              let task = unsafeBitCast(cSym, to: CreateFn.self)(nil)?.takeRetainedValue(),
+              let value = unsafeBitCast(vSym, to: CopyFn.self)(
+                task, "com.apple.security.application-groups" as CFString, nil)?.takeRetainedValue()
+        else { return nil }
+        return (value as? [String])?.first
+    }
     private static var shared: UserDefaults? { UserDefaults(suiteName: appGroup) }
 
     // Each reader falls back to a safe default if the group is unavailable (e.g. a re-signer that
@@ -44,6 +62,7 @@ enum BroadcastConfig {
     // MARK: - SDL screen-share mode (spike). Off by default so the NaviLite path is unchanged.
 
     /// When true, the extension drives an `SDLManager` video stream instead of the NaviLite DashConn.
+    /// Written to the App Group when the user picks the Motorize/USB bike (NaviLite is the default).
     static func sdlMode() -> Bool { shared?.bool(forKey: "stream.sdl") ?? false }
     /// SDL transport: TCP (SDL Core / Manticore emulator) when true, else iAP2/USB (the real bike).
     static func sdlUseTCP() -> Bool { shared?.bool(forKey: "sdl.tcp") ?? false }

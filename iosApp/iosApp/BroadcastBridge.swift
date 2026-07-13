@@ -1,5 +1,6 @@
 import SwiftUI
 import ReplayKit
+import Security
 import ComposeApp
 
 /// Connects the shared Compose UI to iOS screen broadcasting:
@@ -44,18 +45,23 @@ final class BroadcastBridge: ObservableObject {
     /// remote tester (no Mac/Xcode) can send them to us. The broadcast extension writes sdl_ext_log.txt
     /// (and any other *.txt/*.log) into the shared container; the main app reads the same container.
     private func shareDiagnostics() {
-        guard let container = FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: "group.app.pillion") else { return }
+        guard let top = Self.topViewController() else { return }
+        func alert(_ title: String, _ msg: String) {
+            let a = UIAlertController(title: title, message: msg, preferredStyle: .alert)
+            a.addAction(UIAlertAction(title: "OK", style: .default))
+            top.present(a, animated: true)
+        }
+        // Resolve the *granted* App Group at runtime (SideStore may rewrite it); nil = not granted at all.
+        guard let group = Self.grantedAppGroup(),
+              let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) else {
+            alert("Diagnostics unavailable", "App Group not granted (SideStore free-account limitation).")
+            return
+        }
         let files = ((try? FileManager.default.contentsOfDirectory(
             at: container, includingPropertiesForKeys: nil)) ?? [])
             .filter { ["txt", "log"].contains($0.pathExtension.lowercased()) }
-        guard let top = Self.topViewController() else { return }
         guard !files.isEmpty else {
-            let a = UIAlertController(title: "No diagnostics yet",
-                                      message: "Run a mirroring session first, then share the log.",
-                                      preferredStyle: .alert)
-            a.addAction(UIAlertAction(title: "OK", style: .default))
-            top.present(a, animated: true)
+            alert("No diagnostics yet", "Run a mirroring session first, then share the log.")
             return
         }
         let share = UIActivityViewController(activityItems: files, applicationActivities: nil)
@@ -65,8 +71,27 @@ final class BroadcastBridge: ObservableObject {
         top.present(share, animated: true)
     }
 
+    /// The group id actually granted to this app (from our entitlement), or "group.app.pillion" if the
+    /// entitlement read returns nil. Must match the id the extension resolves the same way (BroadcastConfig).
+    /// ponytail: SecTask* is iOS-SPI (not in the importable SDK headers) so dlsym it from Security.framework.
+    private static func grantedAppGroup() -> String? {
+        typealias CreateFn = @convention(c) (CFAllocator?) -> Unmanaged<AnyObject>?
+        typealias CopyFn = @convention(c) (AnyObject, CFString, UnsafeMutableRawPointer?) -> Unmanaged<AnyObject>?
+        let rtldDefault = UnsafeMutableRawPointer(bitPattern: -2)
+        guard let cSym = dlsym(rtldDefault, "SecTaskCreateFromSelf"),
+              let vSym = dlsym(rtldDefault, "SecTaskCopyValueForEntitlement"),
+              let task = unsafeBitCast(cSym, to: CreateFn.self)(nil)?.takeRetainedValue(),
+              let value = unsafeBitCast(vSym, to: CopyFn.self)(
+                task, "com.apple.security.application-groups" as CFString, nil)?.takeRetainedValue()
+        else { return "group.app.pillion" }
+        return (value as? [String])?.first ?? "group.app.pillion"
+    }
+
     private static func topViewController() -> UIViewController? {
-        let scene = UIApplication.shared.connectedScenes.first { $0.activationState == .foregroundActive } as? UIWindowScene
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let scene = scenes.first { $0.activationState == .foregroundActive }
+            ?? scenes.first { $0.activationState == .foregroundInactive }
+            ?? scenes.first
         var vc = (scene?.windows.first { $0.isKeyWindow } ?? scene?.windows.first)?.rootViewController
         while let presented = vc?.presentedViewController { vc = presented }
         return vc
