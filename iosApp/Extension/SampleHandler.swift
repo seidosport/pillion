@@ -5,15 +5,9 @@ import CoreMedia
 import ImageIO
 import ExternalAccessory
 import Metal
+import os
 import os.log
-import SmartDeviceLink   // spike: prove the patched SDL fork links into the extension target
-
-// spike: never-run reference so the linker actually pulls in SmartDeviceLink. Do NOT wire streaming.
-@inline(never) private func _sdlLinkProof() {
-    if ProcessInfo.processInfo.environment["__NEVER__"] == "1" {
-        _ = SDLManager.self
-    }
-}
+import SmartDeviceLink   // patched app-extension-safe fork (SPM local package, branch extension-safe)
 
 /// Extension logging that survives `log collect`: NSLog content is privacy-redacted (<private>) in
 /// collected archives, so use os_log with %{public} to keep the FPS/ack stats readable.
@@ -34,8 +28,17 @@ enum BroadcastSignal {
 /// Broadcast Upload Extension: captures the whole screen system-wide and streams it to the dash as
 /// NaviLite. Because it runs as a broadcast it keeps going while the phone is in Waze/Maps. Ported
 /// from rickdash-ios; picks the bike (External Accessory) when present, else the dev emulator (TCP).
-class SampleHandler: RPBroadcastSampleHandler {
+class SampleHandler: RPBroadcastSampleHandler, SDLManagerDelegate {
     private var conn: DashConn!
+    // SDL screen-share (spike): when BroadcastConfig.sdlMode() is on we drive an SDLManager video
+    // stream instead of the NaviLite DashConn. Manual data path (no CarWindow): we push our own
+    // captured frames via streamManager.sendVideoData(_:).
+    private static let sdlAppName = "Motorize"
+    private static let sdlFullAppId = "7a5f3f25-8b82-4e0f-a173-80aefee79897"
+    private var sdlManager: SDLManager?
+    private var sdlVideoObserver: NSObjectProtocol?
+    private var sdlFirstFrameLogged = false
+    private lazy var sdlLogURL = BroadcastConfig.appGroupFile("sdl_ext_log.txt")
     // Force an explicit Metal-backed context so the downscale runs on the GPU. The capture thread only
     // stashes the freshest pixel buffer; JPEG encode happens on the sender thread at send time so we
     // encode exactly the ~maxFps frames we ship (not every captured frame) and each one is the freshest.
@@ -56,11 +59,12 @@ class SampleHandler: RPBroadcastSampleHandler {
 
     override func broadcastStarted(withSetupInfo setupInfo: [String: NSObject]?) {
         running = true
+        BroadcastSignal.post(BroadcastSignal.started)
+        if BroadcastConfig.sdlMode() { startSdl(); return }   // SDL path; NaviLite path below untouched
         // Pull the user's live Settings (fps / quality) from the App Group.
         sendInterval = 1.0 / Double(BroadcastConfig.liveMaxFps())
         jpegQuality = BroadcastConfig.liveJpegQuality()
         extLog("PillionExt: settings — fps=\(BroadcastConfig.liveMaxFps()) quality=\(jpegQuality)")
-        BroadcastSignal.post(BroadcastSignal.started)
         // Enumerate EVERY connected MFi accessory up front so a bike test is diagnosable even when the
         // protocol string doesn't match (otherwise we silently fall back to TCP and learn nothing about
         // what the CCU actually advertises). iOS only exposes MFi accessories here — if the bike isn't
@@ -178,6 +182,7 @@ class SampleHandler: RPBroadcastSampleHandler {
 
     override func processSampleBuffer(_ sb: CMSampleBuffer, with type: RPSampleBufferType) {
         guard type == .video, running, let pb = CMSampleBufferGetImageBuffer(sb) else { return }
+        if sdlManager != nil { sdlSend(pb, sb); return }
         // Just stash the freshest pixel buffer (cheap CFRetain — keeps its memory valid past this
         // callback); the sender thread encodes it at send time. No encode on the capture thread.
         var orient = CGImagePropertyOrientation.up
@@ -232,5 +237,123 @@ class SampleHandler: RPBroadcastSampleHandler {
         BroadcastSignal.post(BroadcastSignal.stopped)
         lock.lock(); latestPixels = nil; lock.unlock()   // release the last retained pixel buffer
         conn?.close()
+        if let o = sdlVideoObserver { NotificationCenter.default.removeObserver(o) }
+        sdlManager?.stop()
+        sdlManager = nil
+        sdlLog("broadcastFinished — SDLManager stopped")
+    }
+
+    // MARK: - SDL screen-share (spike)
+
+    /// os_log (%{public}) AND a per-line-flushed file in the App Group — the whole point of the spike is
+    /// that a tester on an untethered ride can share exactly how far the lifecycle got.
+    private func sdlLog(_ s: String) {
+        extLog("SDL: \(s)")
+        guard let url = sdlLogURL, let data = "\(Date()): \(s)\n".data(using: .utf8) else { return }
+        if let h = try? FileHandle(forWritingTo: url) {
+            h.seekToEndOfFile(); h.write(data); try? h.close()
+        } else {
+            try? data.write(to: url)   // first line creates the file
+        }
+    }
+
+    private func startSdl() {
+        try? Data().write(to: sdlLogURL ?? URL(fileURLWithPath: "/dev/null"))   // truncate previous ride's log
+        let lifecycle: SDLLifecycleConfiguration
+        if BroadcastConfig.sdlUseTCP() {
+            lifecycle = SDLLifecycleConfiguration(appName: Self.sdlAppName, fullAppId: Self.sdlFullAppId,
+                                                  ipAddress: BroadcastConfig.sdlHost(), port: BroadcastConfig.sdlPort())
+            sdlLog("transport = TCP \(BroadcastConfig.sdlHost()):\(BroadcastConfig.sdlPort())")
+        } else {
+            lifecycle = SDLLifecycleConfiguration(appName: Self.sdlAppName, fullAppId: Self.sdlFullAppId)
+            sdlLog("transport = iAP2 (USB multiplexing)")
+        }
+        lifecycle.appType = .navigation
+        // Manual data path: plain insecure streaming config = NO CarWindow, NO rootViewController.
+        // We push captured frames ourselves via streamManager.sendVideoData(_:).
+        let streaming = SDLStreamingMediaConfiguration()
+        let config = SDLConfiguration(lifecycle: lifecycle,
+                                      lockScreen: .disabled(),
+                                      logging: .default(),
+                                      streamingMedia: streaming,
+                                      fileManager: .default(),
+                                      encryption: nil)
+        let mgr = SDLManager(configuration: config, delegate: self)
+        sdlManager = mgr
+        sdlVideoObserver = NotificationCenter.default.addObserver(
+            forName: .SDLVideoStreamDidStart, object: nil, queue: nil) { [weak self, weak mgr] _ in
+            self?.sdlLog("VideoStreamDidStart — video service connected, screen=\(mgr?.streamManager?.screenSize ?? .zero)")
+        }
+        sdlLog("SDLManager.start …")
+        mgr.start { [weak self] success, error in
+            self?.sdlLog("ready handler: success=\(success) err=\(error?.localizedDescription ?? "nil")")
+        }
+    }
+
+    /// One-frame-at-a-time: GPU-downscale the captured buffer to the negotiated video resolution and
+    /// hand it to SDL's VideoToolbox encoder. No queue, no retained full-screen buffers.
+    private func sdlSend(_ pb: CVPixelBuffer, _ sb: CMSampleBuffer) {
+        guard let sm = sdlManager?.streamManager, sm.isVideoConnected else { return }
+        // Extensions are killed past ~50MB. Drop (don't crash) if headroom gets tight.
+        let avail = os_proc_available_memory()
+        if avail > 0 && avail < 8 * 1024 * 1024 { sdlLog("mem low (\(avail / 1024 / 1024)MB free) — dropping frame"); return }
+        let target = sm.screenSize == .zero ? CGSize(width: 800, height: 480) : sm.screenSize
+        var orient = CGImagePropertyOrientation.up
+        if let n = CMGetAttachment(sb, key: RPVideoSampleOrientationKey as CFString, attachmentModeOut: nil) as? NSNumber,
+           let o = CGImagePropertyOrientation(rawValue: n.uint32Value) { orient = o }
+        let fix: CGImagePropertyOrientation
+        switch orient {
+        case .left: fix = .right
+        case .right: fix = .left
+        case .leftMirrored: fix = .rightMirrored
+        case .rightMirrored: fix = .leftMirrored
+        default: fix = orient
+        }
+        autoreleasepool {
+            guard let scaled = scaledBuffer(from: pb, orient: fix, to: target) else { return }
+            let ok = sm.sendVideoData(scaled)
+            if !sdlFirstFrameLogged {
+                sdlFirstFrameLogged = true
+                sdlLog("first sendVideoData -> \(ok) @ \(Int(target.width))x\(Int(target.height))")
+            } else if !ok {
+                sdlLog("sendVideoData returned NO (encoder rejected frame)")
+            }
+        }
+    }
+
+    /// Aspect-fit letterbox into a target-sized pixel buffer. Prefers SDL's encoder pool (already the
+    /// right format/size); falls back to a fresh IOSurface-backed BGRA buffer before the pool exists.
+    private func scaledBuffer(from pb: CVPixelBuffer, orient: CGImagePropertyOrientation, to size: CGSize) -> CVPixelBuffer? {
+        var outPB: CVPixelBuffer?
+        if let pool = sdlManager?.streamManager?.pixelBufferPool {
+            CVPixelBufferPoolCreatePixelBuffer(nil, pool, &outPB)
+        }
+        if outPB == nil {
+            let attrs: [String: Any] = [kCVPixelBufferIOSurfacePropertiesKey as String: [:],
+                                        kCVPixelBufferMetalCompatibilityKey as String: true]
+            CVPixelBufferCreate(nil, Int(size.width), Int(size.height),
+                                kCVPixelFormatType_32BGRA, attrs as CFDictionary, &outPB)
+        }
+        guard let out = outPB else { return nil }
+        let outW = CGFloat(CVPixelBufferGetWidth(out)), outH = CGFloat(CVPixelBufferGetHeight(out))
+        let img = CIImage(cvPixelBuffer: pb).oriented(orient)
+        let e = img.extent
+        let scale = min(outW / e.width, outH / e.height)
+        let s = img.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        let se = s.extent
+        let centered = s.transformed(by: CGAffineTransform(translationX: (outW - se.width) / 2 - se.origin.x,
+                                                           y: (outH - se.height) / 2 - se.origin.y))
+        let canvas = CGRect(x: 0, y: 0, width: outW, height: outH)
+        let final = centered.composited(over: CIImage(color: .black).cropped(to: canvas)).cropped(to: canvas)
+        ci.render(final, to: out)
+        return out
+    }
+
+    // MARK: - SDLManagerDelegate
+
+    func managerDidDisconnect() { sdlLog("managerDidDisconnect") }
+
+    func hmiLevel(_ oldLevel: SDLHMILevel, didChangeToLevel newLevel: SDLHMILevel) {
+        sdlLog("HMI \(oldLevel.rawValue) -> \(newLevel.rawValue)")
     }
 }

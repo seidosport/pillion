@@ -18,12 +18,44 @@
 	<string>0.2.0-alpha</string>
 	<key>CFBundleVersion</key>
 	<string>2</string>
+	<!-- SDL's SDLIAPTransport NSAsserts (SIGABRT) unless the extension bundle declares the FULL protocol
+	     set — inside an extension NSBundle.mainBundle resolves to THIS bundle, not the container app.
+	     Full set = multisession + ford.sync.prot0 + prot0…prot29 (30). Plus the NaviLite protocol. -->
 	<key>UISupportedExternalAccessoryProtocols</key>
 	<array>
 		<string>com.garmin.navilite.data</string>
+		<string>com.smartdevicelink.multisession</string>
+		<string>com.ford.sync.prot0</string>
 		<string>com.smartdevicelink.prot0</string>
 		<string>com.smartdevicelink.prot1</string>
 		<string>com.smartdevicelink.prot2</string>
+		<string>com.smartdevicelink.prot3</string>
+		<string>com.smartdevicelink.prot4</string>
+		<string>com.smartdevicelink.prot5</string>
+		<string>com.smartdevicelink.prot6</string>
+		<string>com.smartdevicelink.prot7</string>
+		<string>com.smartdevicelink.prot8</string>
+		<string>com.smartdevicelink.prot9</string>
+		<string>com.smartdevicelink.prot10</string>
+		<string>com.smartdevicelink.prot11</string>
+		<string>com.smartdevicelink.prot12</string>
+		<string>com.smartdevicelink.prot13</string>
+		<string>com.smartdevicelink.prot14</string>
+		<string>com.smartdevicelink.prot15</string>
+		<string>com.smartdevicelink.prot16</string>
+		<string>com.smartdevicelink.prot17</string>
+		<string>com.smartdevicelink.prot18</string>
+		<string>com.smartdevicelink.prot19</string>
+		<string>com.smartdevicelink.prot20</string>
+		<string>com.smartdevicelink.prot21</string>
+		<string>com.smartdevicelink.prot22</string>
+		<string>com.smartdevicelink.prot23</string>
+		<string>com.smartdevicelink.prot24</string>
+		<string>com.smartdevicelink.prot25</string>
+		<string>com.smartdevicelink.prot26</string>
+		<string>com.smartdevicelink.prot27</string>
+		<string>com.smartdevicelink.prot28</string>
+		<string>com.smartdevicelink.prot29</string>
 	</array>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Project the screen to the motorcycle dash.</string>

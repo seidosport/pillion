@@ -40,4 +40,21 @@ enum BroadcastConfig {
         let v = shared?.integer(forKey: "stream.quality") ?? 0
         return (10...80).contains(v) ? Double(v) / 100.0 : 0.4
     }
+
+    // MARK: - SDL screen-share mode (spike). Off by default so the NaviLite path is unchanged.
+
+    /// When true, the extension drives an `SDLManager` video stream instead of the NaviLite DashConn.
+    static func sdlMode() -> Bool { shared?.bool(forKey: "stream.sdl") ?? false }
+    /// SDL transport: TCP (SDL Core / Manticore emulator) when true, else iAP2/USB (the real bike).
+    static func sdlUseTCP() -> Bool { shared?.bool(forKey: "sdl.tcp") ?? false }
+    static func sdlHost() -> String { shared?.string(forKey: "sdl.host") ?? "127.0.0.1" }
+    static func sdlPort() -> UInt16 {
+        let v = shared?.integer(forKey: "sdl.port") ?? 0
+        return (1...65535).contains(v) ? UInt16(v) : 12345
+    }
+    /// A file in the shared App Group container (survives the ride, tester can AirDrop it out).
+    static func appGroupFile(_ name: String) -> URL? {
+        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup)?
+            .appendingPathComponent(name)
+    }
 }
