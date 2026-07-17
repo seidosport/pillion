@@ -60,7 +60,13 @@ class SampleHandler: RPBroadcastSampleHandler, SDLManagerDelegate {
     override func broadcastStarted(withSetupInfo setupInfo: [String: NSObject]?) {
         running = true
         BroadcastSignal.post(BroadcastSignal.started)
-        if BroadcastConfig.sdlMode() { startSdl(); return }   // SDL path; NaviLite path below untouched
+        // Log which path we took BEFORE branching, into the file the tester can share. Without this a
+        // NaviLite run looks identical to a broken SDL run (the only file line was broadcastFinished),
+        // which is exactly how a stale/mismatched flag cost a bike session.
+        let sdl = BroadcastConfig.sdlMode()
+        try? Data().write(to: sdlLogURL ?? URL(fileURLWithPath: "/dev/null"))   // fresh per broadcast
+        sdlLog("broadcastStarted — mode=\(sdl ? "SDL" : "NaviLite") group=\(BroadcastConfig.appGroup) stream.sdl=\(sdl)")
+        if sdl { startSdl(); return }   // SDL path; NaviLite path below untouched
         // Pull the user's live Settings (fps / quality) from the App Group.
         sendInterval = 1.0 / Double(BroadcastConfig.liveMaxFps())
         jpegQuality = BroadcastConfig.liveJpegQuality()
@@ -258,7 +264,7 @@ class SampleHandler: RPBroadcastSampleHandler, SDLManagerDelegate {
     }
 
     private func startSdl() {
-        try? Data().write(to: sdlLogURL ?? URL(fileURLWithPath: "/dev/null"))   // truncate previous ride's log
+        // (broadcastStarted already truncated the log and wrote the mode line — don't wipe it here)
         let lifecycle: SDLLifecycleConfiguration
         if BroadcastConfig.sdlUseTCP() {
             lifecycle = SDLLifecycleConfiguration(appName: Self.sdlAppName, fullAppId: Self.sdlFullAppId,

@@ -18,6 +18,7 @@ fun MainViewController(
     naviliteController: MirrorController,
     sdlController: MirrorController?,
     onShareDiagnostics: () -> Unit,
+    appGroup: String,
 ): UIViewController {
     registerBuiltInHeadUnits()
     return ComposeUIViewController {
@@ -29,7 +30,7 @@ fun MainViewController(
             // selection. `sdlController` (in-app CarWindow SdlSession) is left wired but unused here.
             controllerFor = { _ -> naviliteController },
             updateChecker = null,
-            settingsStore = IosSettingsStore(),
+            settingsStore = IosSettingsStore(appGroup),
             onShareDiagnostics = onShareDiagnostics,
         )
     }

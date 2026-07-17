@@ -38,7 +38,10 @@ final class BroadcastBridge: ObservableObject {
         MainViewControllerKt.MainViewController(
             naviliteController: controller,
             sdlController: sdlController,
-            onShareDiagnostics: { [weak self] in self?.shareDiagnostics() })
+            onShareDiagnostics: { [weak self] in self?.shareDiagnostics() },
+            // Hand Kotlin the *granted* group id (a re-signer may rewrite it) so the flags it writes
+            // land in the same suite the extension reads.
+            appGroup: Self.grantedAppGroup() ?? "group.app.pillion")
     }
 
     /// Settings → "Share diagnostics": hand the extension's App Group log(s) to the iOS share sheet so a
