@@ -38,6 +38,12 @@ class SampleHandler: RPBroadcastSampleHandler, SDLManagerDelegate {
     private var sdlManager: SDLManager?
     private var sdlVideoObserver: NSObjectProtocol?
     private var sdlFirstFrameLogged = false
+    private var sdlLastSend = Date(timeIntervalSince1970: 0)
+    // ReplayKit delivers up to 60fps; the GPU downscale runs synchronously on its capture thread, so
+    // sending every frame saturates that thread (sluggish mirror) and starves the foreground app
+    // (sluggish app-switch). Pace to ~20fps — plenty for a 640×360 H.264 nav view, ~3× less load.
+    private let sdlSendInterval = 1.0 / 20.0
+    private var sdlReconnecting = false
     private lazy var sdlLogURL = BroadcastConfig.appGroupFile("sdl_ext_log.txt")
     // Force an explicit Metal-backed context so the downscale runs on the GPU. The capture thread only
     // stashes the freshest pixel buffer; JPEG encode happens on the sender thread at send time so we
@@ -300,6 +306,8 @@ class SampleHandler: RPBroadcastSampleHandler, SDLManagerDelegate {
     /// hand it to SDL's VideoToolbox encoder. No queue, no retained full-screen buffers.
     private func sdlSend(_ pb: CVPixelBuffer, _ sb: CMSampleBuffer) {
         guard let sm = sdlManager?.streamManager, sm.isVideoConnected else { return }
+        // Pace to the target fps — the render below is synchronous on this (capture) thread.
+        let now = Date(); if now.timeIntervalSince(sdlLastSend) < sdlSendInterval { return }; sdlLastSend = now
         // Extensions are killed past ~50MB. Drop (don't crash) if headroom gets tight.
         let avail = os_proc_available_memory()
         if avail > 0 && avail < 8 * 1024 * 1024 { sdlLog("mem low (\(avail / 1024 / 1024)MB free) — dropping frame"); return }
@@ -357,7 +365,26 @@ class SampleHandler: RPBroadcastSampleHandler, SDLManagerDelegate {
 
     // MARK: - SDLManagerDelegate
 
-    func managerDidDisconnect() { sdlLog("managerDidDisconnect") }
+    func managerDidDisconnect() {
+        sdlLog("managerDidDisconnect")
+        // Locking the phone drops the iAP2 session (HMI FULL→LIMITED→disconnect). Instead of forcing
+        // the rider to restart the broadcast, rebuild the SDLManager and reconnect. If the extension is
+        // merely suspended while locked, this fires on unlock and auto-recovers; if the session dropped
+        // but the extension is alive, it reconnects in place. Guarded so overlapping disconnects don't
+        // stack a reconnect storm. ponytail: fixed 2s backoff; make it exponential only if it flaps.
+        guard running, BroadcastConfig.sdlMode(), !sdlReconnecting else { return }
+        sdlReconnecting = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self = self, self.running else { return }
+            if let obs = self.sdlVideoObserver { NotificationCenter.default.removeObserver(obs) }
+            self.sdlManager?.stop()
+            self.sdlManager = nil
+            self.sdlFirstFrameLogged = false
+            self.sdlReconnecting = false
+            self.sdlLog("reconnecting SDLManager after disconnect…")
+            self.startSdl()
+        }
+    }
 
     func hmiLevel(_ oldLevel: SDLHMILevel, didChangeToLevel newLevel: SDLHMILevel) {
         sdlLog("HMI \(oldLevel.rawValue) -> \(newLevel.rawValue)")
