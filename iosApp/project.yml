@@ -11,8 +11,11 @@ settings:
     CODE_SIGN_STYLE: Automatic
 packages:
   SmartDeviceLink:
-    # Local app-extension-safe fork (patched from tag 7.6.1). See sdl_ios/EXTENSION_PATCHES.md.
-    path: /Users/alex/Proyectos/sdl_ios
+    # App-extension-safe fork of SDL iOS 7.6.1 (BSD-3-Clause). Patched to build under
+    # -fapplication-extension + neutralize UIApplication calls so SDLManager runs inside the
+    # broadcast extension. Pinned to a commit for reproducibility. See the fork's EXTENSION_PATCHES.md.
+    url: https://github.com/alexandrevega/sdl_ios
+    revision: 1c398435b8544ca6008e0ad11d6dfa45b7cae6ce
 targets:
   iosApp:
     type: application
