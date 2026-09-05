@@ -33,7 +33,10 @@ enum DiagPhase: String, CaseIterable {
         case .accessoryNoProto: return "Ve un accesorio, pero sin el canal de navegación."
         case .usingBike:        return "Encontró la moto. Conectando…"
         case .usingEmulator:    return "No encontró la moto — está transmitiendo al emulador (al vacío)."
-        case .connectFailed:    return "Encontró la moto pero no pudo abrir la conexión."
+        // Reached from either transport, so it must not name one: without a bike the extension
+        // falls back to the TCP emulator, whose absence fails here too. The preceding phase in the
+        // history already says which link was being opened.
+        case .connectFailed:    return "No pudo abrir la conexión. (Mira el paso anterior para saber con qué.)"
         case .waitingEsn:       return "Conectado. Esperando el saludo del tablero…"
         case .waitingSecData:   return "El tablero saludó. Autenticando…"
         case .handshakeFailed:  return "La autenticación no se completó."
