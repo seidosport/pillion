@@ -19,8 +19,10 @@ targets:
     platform: iOS
     sources:
       - path: iosApp
-      # Both processes need the trace vocabulary; the rest of Shared/ stays extension-only.
-      - path: Shared/DiagnosticSignals.swift
+      # The app needs the same NaviLite codec and MFi transport the extension uses: it can reach the
+      # dash on its own (see DashProbe), which is the only path available while the extension can't
+      # be signed into running.
+      - path: Shared
     configFiles:
       Debug: Signing.xcconfig
       Release: Signing.xcconfig

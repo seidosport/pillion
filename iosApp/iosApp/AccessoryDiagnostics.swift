@@ -15,6 +15,7 @@ import ExternalAccessory
 /// between them costs a trip to the bike each time.
 struct AccessoryDiagnostics: View {
     @ObservedObject var trace: BroadcastTrace
+    @StateObject private var probe = DashProbe()
     @Environment(\.dismiss) private var dismiss
     @State private var accessories: [EAAccessory] = []
     @State private var copied = false
@@ -51,6 +52,33 @@ struct AccessoryDiagnostics: View {
                              + "unos segundos, el capturador no está arrancando.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
+                    }
+                }
+                // Reaches the dash from this process, bypassing the extension entirely — the only
+                // way to answer the protocol questions while the extension can't be signed into
+                // launching. Puts a test card on the dash instead of the phone's screen.
+                Section("Prueba directa con la moto") {
+                    Button {
+                        if probe.running { probe.stop() } else { probe.start() }
+                    } label: {
+                        HStack {
+                            Text(probe.running ? "Detener prueba" : "Probar conexión con la moto")
+                            Spacer()
+                            if probe.running { ProgressView() }
+                        }
+                    }
+                    .disabled(!hasNavProtocol && !probe.running)
+                    if let h = probe.acceptedHeight {
+                        Text("El tablero aceptó 480 × \(h)")
+                            .font(.callout)
+                            .foregroundStyle(.green)
+                    }
+                    if !probe.lines.isEmpty {
+                        VStack(alignment: .leading, spacing: 3) {
+                            ForEach(Array(probe.lines.enumerated()), id: \.offset) { _, l in
+                                Text(l).font(.system(.caption, design: .monospaced))
+                            }
+                        }
                     }
                 }
                 Section {
@@ -140,6 +168,9 @@ struct AccessoryDiagnostics: View {
             }
         } else {
             s += "CAPTURADOR: sin señal — no dijo nada.\n"
+        }
+        if !probe.lines.isEmpty {
+            s += "\nPRUEBA DIRECTA:\n" + probe.lines.map { "  \($0)" }.joined(separator: "\n") + "\n"
         }
         s += "\n\(verdict)\n"
         for a in accessories {
