@@ -35,18 +35,17 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # Kotlin/Native 2.1.0 (see gradle/libs.versions.toml) was released against Xcode 16; newer
-      # Xcode has broken K/N linking before. Prefer a 16.x if the image has one, otherwise take the
-      # default and print what we got — a first run on an unfamiliar image should be diagnosable
-      # from the log rather than by guessing.
+      # Kotlin/Native 2.1.0 (see gradle/libs.versions.toml) was released against Xcode 16, so stay
+      # on 16.x rather than the image's Xcode 26. Pick 16.4 by name, not by glob: the image carries
+      # every 16.x back to 16.0, but only the default (16.4) has its iOS platform fully provisioned
+      # — an older one compiles sources fine and then dies on the first storyboard with
+      # "iOS 18.0 Platform Not Installed".
       - name: Select Xcode
         run: |
           ls -d /Applications/Xcode*.app || true
-          for x in /Applications/Xcode_16*.app; do
-            if [ -d "$x" ]; then sudo xcode-select -s "$x"; break; fi
-          done
+          if [ -d /Applications/Xcode_16.4.app ]; then sudo xcode-select -s /Applications/Xcode_16.4.app; fi
+          xcode-select -p
           xcodebuild -version
-          swift --version
 
       - name: Install xcodegen
         run: brew install xcodegen
