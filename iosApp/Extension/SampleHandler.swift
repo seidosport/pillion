@@ -58,6 +58,7 @@ class SampleHandler: RPBroadcastSampleHandler {
         jpegQuality = BroadcastConfig.liveJpegQuality()
         extLog("PillionExt: settings — fps=\(BroadcastConfig.liveMaxFps()) quality=\(jpegQuality)")
         BroadcastSignal.post(BroadcastSignal.started)
+        DiagBeacon.shared.start()
         // Enumerate EVERY connected MFi accessory up front so a bike test is diagnosable even when the
         // protocol string doesn't match (otherwise we silently fall back to TCP and learn nothing about
         // what the CCU actually advertises). iOS only exposes MFi accessories here — if the bike isn't
@@ -66,25 +67,42 @@ class SampleHandler: RPBroadcastSampleHandler {
         extLog("PillionExt: \(accs.count) connected accessory(ies)")
         for a in accs { extLog("PillionExt:  • \(a.name) — protocols=\(a.protocolStrings)") }
         let hasBike = accs.contains { $0.protocolStrings.contains(BroadcastConfig.dashProtocol) }
+        // Report the enumeration itself, not just its conclusion. The app can see the CCU from its
+        // own process; whether this one can is a separate question, and the answer decides whether
+        // the problem is the bike link or the extension's sandbox.
+        DiagBeacon.shared.set(accs.isEmpty ? .noAccessories : (hasBike ? .usingBike : .accessoryNoProto))
         let c: DashConn = hasBike ? EAConn()
                                   : TCPConn(host: BroadcastConfig.emulatorHost, port: BroadcastConfig.emulatorPort)
         c.logger = { s in extLog("PillionExt: \(s)") }
         conn = c
         extLog("PillionExt: transport = \(hasBike ? "bike (External Accessory)" : "emulator (TCP)")")
+        if !hasBike { DiagBeacon.shared.set(.usingEmulator) }
         Thread.detachNewThread { [weak self] in
             guard let self = self else { return }
             do {
                 try self.conn.connect()
+            } catch {
+                DiagBeacon.shared.set(.connectFailed)
+                extLog("PillionExt connect err: \((error as NSError).localizedDescription)")
+                return
+            }
+            do {
                 try self.handshake()
-                self.pushLoop()
-            } catch { extLog("PillionExt connect err: \((error as NSError).localizedDescription)") }
+            } catch {
+                DiagBeacon.shared.set(.handshakeFailed)
+                extLog("PillionExt handshake err: \((error as NSError).localizedDescription)")
+                return
+            }
+            self.pushLoop()
         }
     }
 
     private func handshake() throws {
+        DiagBeacon.shared.set(.waitingEsn)
         var f = try conn.readFrame(timeout: 12); while f.svc != 66 { f = try conn.readFrame(timeout: 12) }
         conn.write(NaviLite.frame(6, 81, 0, [1, 0]))
         conn.write(NaviLite.frame(6, 33, 1, NaviLite.hexB("1c07000100000000")))
+        DiagBeacon.shared.set(.waitingSecData)
         f = try conn.readFrame(timeout: 12); while f.svc != 83 { f = try conn.readFrame(timeout: 12) }
         // SEC_DATA carries the CCU's software part number ahead of the nonce — the only identification
         // of the dash generation we get, and what decides the panel height (see DashPanel). Log it
@@ -103,6 +121,8 @@ class SampleHandler: RPBroadcastSampleHandler {
             (14, 1, NaviLite.hexB("07190600302e32206d69")), (3, 1, []), (17, 1, NaviLite.hexB("00000000036d7068")),
             (13, 0, [1, 0]), (12, 0, [1, 0])]
         for (s, p, pl) in setup { conn.write(NaviLite.frame(6, s, p, pl)) }
+        DiagBeacon.shared.setPanel(height: panelH)
+        DiagBeacon.shared.set(.streamingNoAck)
         extLog("PillionExt: auth + setup done")
     }
 
@@ -161,6 +181,7 @@ class SampleHandler: RPBroadcastSampleHandler {
             // Window gate: block only when 2 frames are already un-ACKed.
             while running && inFlight.count >= 2 {
                 if awaitAck(1.0) {
+                    if !everAcked { DiagBeacon.shared.set(.streamingAcked) }
                     everAcked = true
                     steer(Date().timeIntervalSince(inFlight.removeFirst()))
                 } else {
@@ -168,7 +189,10 @@ class SampleHandler: RPBroadcastSampleHandler {
                     // so FIFO matching stays honest, and shed quality as congestion signal.
                     var drained = false
                     while awaitAck(0.05) { drained = true }
-                    if drained { everAcked = true }
+                    if drained {
+                        if !everAcked { DiagBeacon.shared.set(.streamingAcked) }
+                        everAcked = true
+                    }
                     inFlight.removeAll()
                     steer(1.0)
                     // Not one ACK since the handshake? A dash that can't decode the frame at all
@@ -178,6 +202,7 @@ class SampleHandler: RPBroadcastSampleHandler {
                     // settled and silence means something else (link, HMI state, another app).
                     if !everAcked && !panelKnown {
                         panelH = DashPanel.nextCandidate(after: panelH)
+                        DiagBeacon.shared.setPanel(height: panelH)
                         extLog("PillionExt: no ACK yet — retrying at \(DashPanel.width)×\(panelH)")
                     }
                 }
@@ -253,6 +278,7 @@ class SampleHandler: RPBroadcastSampleHandler {
 
     override func broadcastFinished() {
         running = false
+        DiagBeacon.shared.stop()
         BroadcastSignal.post(BroadcastSignal.stopped)
         lock.lock(); latestPixels = nil; lock.unlock()   // release the last retained pixel buffer
         conn?.close()

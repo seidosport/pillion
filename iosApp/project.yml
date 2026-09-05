@@ -19,6 +19,8 @@ targets:
     platform: iOS
     sources:
       - path: iosApp
+      # Both processes need the trace vocabulary; the rest of Shared/ stays extension-only.
+      - path: Shared/DiagnosticSignals.swift
     configFiles:
       Debug: Signing.xcconfig
       Release: Signing.xcconfig

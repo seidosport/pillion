@@ -14,6 +14,7 @@ import ExternalAccessory
 /// there, but not handing us the navigation protocol). Those need opposite fixes, and guessing
 /// between them costs a trip to the bike each time.
 struct AccessoryDiagnostics: View {
+    @ObservedObject var trace: BroadcastTrace
     @Environment(\.dismiss) private var dismiss
     @State private var accessories: [EAAccessory] = []
     @State private var copied = false
@@ -23,6 +24,35 @@ struct AccessoryDiagnostics: View {
     var body: some View {
         NavigationView {
             List {
+                // First, because it answers the question the accessory list can't: this screen runs
+                // in the app, and the app seeing the CCU says nothing about whether the extension —
+                // a different process, with a different sandbox — sees it too.
+                Section("Capturador de pantalla") {
+                    if let phase = trace.phase {
+                        Text(phase.label)
+                            .font(.callout)
+                            .foregroundStyle(trace.isLive ? .primary : .secondary)
+                        if let panel = trace.panel {
+                            row("Enviando a", panel.label)
+                        }
+                        row("Estado", trace.isLive ? "en marcha" : "sin señal (detenido)")
+                        if trace.history.count > 1 {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Recorrido").font(.caption).foregroundStyle(.secondary)
+                                ForEach(Array(trace.history.enumerated()), id: \.offset) { i, p in
+                                    Text("\(i + 1). \(p.label)").font(.caption2)
+                                }
+                            }
+                        }
+                    } else {
+                        Text("El capturador no ha dicho nada todavía.")
+                            .font(.callout)
+                        Text("Inicia la transmisión y quédate en Pillion. Si sigue en blanco pasados "
+                             + "unos segundos, el capturador no está arrancando.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 Section {
                     Text(verdict)
                         .font(.callout)
@@ -100,7 +130,18 @@ struct AccessoryDiagnostics: View {
 
     /// Plain-text version of the screen, for pasting into a bug report.
     private var report: String {
-        var s = "\(verdict)\n"
+        var s = ""
+        if let phase = trace.phase {
+            s += "CAPTURADOR: \(phase.label)\n"
+            s += "  estado: \(trace.isLive ? "en marcha" : "sin señal")\n"
+            if let panel = trace.panel { s += "  enviando a: \(panel.label)\n" }
+            if trace.history.count > 1 {
+                s += "  recorrido: " + trace.history.map { $0.label }.joined(separator: " → ") + "\n"
+            }
+        } else {
+            s += "CAPTURADOR: sin señal — no dijo nada.\n"
+        }
+        s += "\n\(verdict)\n"
         for a in accessories {
             s += "\n• \(a.name) — \(a.manufacturer) / \(a.modelNumber) / fw \(a.firmwareRevision)\n"
             s += "  protocolos: \(a.protocolStrings.sorted().joined(separator: ", "))\n"
