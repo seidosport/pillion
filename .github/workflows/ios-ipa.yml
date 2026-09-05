@@ -1,0 +1,81 @@
+name: iOS IPA
+
+# Builds the sideloadable, UNSIGNED Pillion.ipa on a macOS runner and uploads it as an artifact.
+# The repo ships no iOS binary, and building it needs macOS + Xcode + the Kotlin/Native toolchain —
+# this is the path for anyone (Windows/Linux) who just wants the .ipa to sideload with
+# AltStore / SideStore / Sideloadly. See docs/IOS-SIDELOAD.md.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'iosApp/**'
+      - 'composeApp/src/commonMain/**'
+      - 'composeApp/src/iosMain/**'
+      - 'composeApp/build.gradle.kts'
+      - 'gradle/**'
+      - '.github/workflows/ios-ipa.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  ipa:
+    # Pinned, not macos-latest: this image's default Xcode is 16.4, which is what Kotlin/Native
+    # 2.1.0 was released against. macos-latest now resolves to macos-26 (Xcode 26.4 default) —
+    # newer than the K/N toolchain here, and a likely link failure.
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # Kotlin/Native 2.1.0 (see gradle/libs.versions.toml) was released against Xcode 16; newer
+      # Xcode has broken K/N linking before. Prefer a 16.x if the image has one, otherwise take the
+      # default and print what we got — a first run on an unfamiliar image should be diagnosable
+      # from the log rather than by guessing.
+      - name: Select Xcode
+        run: |
+          ls -d /Applications/Xcode*.app || true
+          for x in /Applications/Xcode_16*.app; do
+            if [ -d "$x" ]; then sudo xcode-select -s "$x"; break; fi
+          done
+          xcodebuild -version
+          swift --version
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      # The Kotlin/Native toolchain (~1 GB) and the Gradle caches dominate a cold build.
+      - name: Cache Kotlin/Native + Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.konan
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-konan-gradle-${{ hashFiles('gradle/libs.versions.toml', 'composeApp/build.gradle.kts', 'gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: ${{ runner.os }}-konan-gradle-
+
+      # project.yml references Signing.xcconfig for every configuration, but it's gitignored (it
+      # carries a personal DEVELOPMENT_TEAM). The IPA is built unsigned on purpose — the sideloader
+      # re-signs it with the user's own Apple ID — so an empty file is all Xcode needs here.
+      - name: Create empty Signing.xcconfig
+        run: touch iosApp/Signing.xcconfig
+
+      - name: Build unsigned IPA
+        run: |
+          chmod +x gradlew iosApp/build-ipa.sh
+          cd iosApp && ./build-ipa.sh Release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Pillion-ipa
+          path: iosApp/Pillion.ipa
+          if-no-files-found: error
+          retention-days: 30
