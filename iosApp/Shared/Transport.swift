@@ -24,8 +24,15 @@ enum BroadcastConfig {
     /// Fallback frame-rate cap when no live setting is available (see [liveMaxFps]).
     static let maxFps: Int = 15
 
-    /// App Group shared with the container app so the extension can read the user's live Settings
-    /// (the extension is a separate process and can't see the app's own UserDefaults).
+    /// App Group the container app would share its live Settings through (the extension is a
+    /// separate process and can't see the app's own UserDefaults).
+    ///
+    /// No target requests the entitlement any more: a free Apple ID can't create App Groups, and an
+    /// entitlement the provisioning profile doesn't grant gets the extension killed at launch — the
+    /// broadcast never starts and the dash stays blank, with no red recording bar to hint why. Since
+    /// sideloading with a free Apple ID *is* this project's distribution path (docs/IOS-SIDELOAD.md),
+    /// the group could never have worked there. Kept as a lookup so a properly-provisioned build
+    /// still picks the settings up; otherwise the readers below fall back to their defaults.
     static let appGroup = "group.app.pillion"
     private static var shared: UserDefaults? { UserDefaults(suiteName: appGroup) }
 
