@@ -123,8 +123,8 @@ final class DashProbe: ObservableObject {
             }
             if acked {
                 log("✓✓ EL TABLERO ACEPTÓ 480×\(h)")
-                log("Manteniendo la imagen 30 s — mira el tablero.")
-                let deadline = Date().addingTimeInterval(30)
+                log("Manteniendo la imagen 2 min — lee el número más alto que veas.")
+                let deadline = Date().addingTimeInterval(120)
                 while !cancelled && Date() < deadline {
                     var payload: [UInt8] = [3, UInt8(seq & 0xff), UInt8((seq >> 8) & 0xff)]
                     payload.append(contentsOf: jpeg)
@@ -142,38 +142,64 @@ final class DashProbe: ObservableObject {
         finish(false)
     }
 
-    /// A test card at exactly the wire size: corner blocks so a mis-sized or cropped frame is
-    /// obvious at a glance on the dash, and the size printed on it so a photo is self-documenting.
+    /// A ruled test card at exactly the wire size.
+    ///
+    /// The dash accepting a 480×234 frame turned out not to mean it *shows* 480×234: it draws its
+    /// own navigation chrome over part of the panel, and the bottom of the image is lost behind it.
+    /// So the card is a ruler — rows and columns labelled with their pixel coordinate — and reading
+    /// the largest number still visible on the dash gives the usable area directly, without a photo
+    /// or a guess. Everything mirrored later has to fit inside that, not inside 480×234.
     private static func testCard(height: Int) -> [UInt8]? {
-        let size = CGSize(width: CGFloat(DashPanel.width), height: CGFloat(height))
+        let w = CGFloat(DashPanel.width), h = CGFloat(height)
         let format = UIGraphicsImageRendererFormat.default()
         format.scale = 1          // the renderer defaults to screen scale; the dash wants 1:1 pixels
         format.opaque = true
-        let image = UIGraphicsImageRenderer(size: size, format: format).image { ctx in
+        let image = UIGraphicsImageRenderer(size: CGSize(width: w, height: h), format: format).image { ctx in
             UIColor.black.setFill()
-            ctx.fill(CGRect(origin: .zero, size: size))
+            ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+
+            let label: [NSAttributedString.Key: Any] = [
+                .font: UIFont.boldSystemFont(ofSize: 15), .foregroundColor: UIColor.white]
+            let xLabel: [NSAttributedString.Key: Any] = [
+                .font: UIFont.boldSystemFont(ofSize: 13), .foregroundColor: UIColor.systemOrange]
+
+            // Horizontal rules every 20px, numbered on both edges — whichever side survives the
+            // dash's own overlay is enough to read the height off.
+            UIColor(white: 0.55, alpha: 1).setFill()
+            var y: CGFloat = 20
+            while y < h {
+                ctx.fill(CGRect(x: 0, y: y, width: w, height: 1))
+                let s = "\(Int(y))" as NSString
+                s.draw(at: CGPoint(x: 3, y: y + 2), withAttributes: label)
+                s.draw(at: CGPoint(x: w - 3 - s.size(withAttributes: label).width, y: y + 2), withAttributes: label)
+                y += 20
+            }
+            // Vertical rules every 60px, numbered along the very top.
+            UIColor(white: 0.35, alpha: 1).setFill()
+            var x: CGFloat = 60
+            while x < w {
+                ctx.fill(CGRect(x: x, y: 0, width: 1, height: h))
+                ("\(Int(x))" as NSString).draw(at: CGPoint(x: x + 3, y: 2), withAttributes: xLabel)
+                x += 60
+            }
+            // Green corners: all four visible means nothing is being cropped.
             UIColor.systemGreen.setFill()
             let m: CGFloat = 18
-            for p in [CGPoint(x: 0, y: 0),
-                      CGPoint(x: size.width - m, y: 0),
-                      CGPoint(x: 0, y: size.height - m),
-                      CGPoint(x: size.width - m, y: size.height - m)] {
+            for p in [CGPoint(x: 0, y: 0), CGPoint(x: w - m, y: 0),
+                      CGPoint(x: 0, y: h - m), CGPoint(x: w - m, y: h - m)] {
                 ctx.fill(CGRect(x: p.x, y: p.y, width: m, height: m))
             }
-            let title = "PILLION"
-            let subtitle = "480 x \(height)"
+            // A red bar on the last 4 rows: if it's visible, the full height is getting through.
+            UIColor.systemRed.setFill()
+            ctx.fill(CGRect(x: m, y: h - 4, width: w - 2 * m, height: 4))
+
+            let title = "PILLION 480x\(height)" as NSString
             let titleAttrs: [NSAttributedString.Key: Any] = [
-                .font: UIFont.boldSystemFont(ofSize: 56), .foregroundColor: UIColor.white]
-            let subAttrs: [NSAttributedString.Key: Any] = [
-                .font: UIFont.boldSystemFont(ofSize: 36), .foregroundColor: UIColor.systemYellow]
-            let tw = (title as NSString).size(withAttributes: titleAttrs).width
-            let sw = (subtitle as NSString).size(withAttributes: subAttrs).width
-            (title as NSString).draw(at: CGPoint(x: (size.width - tw) / 2, y: size.height * 0.18),
-                                     withAttributes: titleAttrs)
-            (subtitle as NSString).draw(at: CGPoint(x: (size.width - sw) / 2, y: size.height * 0.58),
-                                        withAttributes: subAttrs)
+                .font: UIFont.boldSystemFont(ofSize: 26), .foregroundColor: UIColor.systemYellow]
+            title.draw(at: CGPoint(x: (w - title.size(withAttributes: titleAttrs).width) / 2, y: 34),
+                       withAttributes: titleAttrs)
         }
-        guard let data = image.jpegData(compressionQuality: 0.6) else { return nil }
+        guard let data = image.jpegData(compressionQuality: 0.7) else { return nil }
         return [UInt8](data)
     }
 }
