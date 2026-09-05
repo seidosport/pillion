@@ -45,6 +45,11 @@ class SampleHandler: RPBroadcastSampleHandler {
     // Live settings, read from the App Group at broadcastStarted (default until then).
     private var sendInterval = 1.0 / Double(BroadcastConfig.maxFps)
     private var jpegQuality = 0.4
+    // Panel height on the wire (width is always 480). Set from the CCU's part number at handshake;
+    // when that names no known model we probe the candidates until one ACKs. Both are written and
+    // read on the sender thread only (handshake and pushLoop run on the same detached thread).
+    private var panelH = DashPanel.defaultHeight
+    private var panelKnown = false
 
     override func broadcastStarted(withSetupInfo setupInfo: [String: NSObject]?) {
         running = true
@@ -81,6 +86,17 @@ class SampleHandler: RPBroadcastSampleHandler {
         conn.write(NaviLite.frame(6, 81, 0, [1, 0]))
         conn.write(NaviLite.frame(6, 33, 1, NaviLite.hexB("1c07000100000000")))
         f = try conn.readFrame(timeout: 12); while f.svc != 83 { f = try conn.readFrame(timeout: 12) }
+        // SEC_DATA carries the CCU's software part number ahead of the nonce — the only identification
+        // of the dash generation we get, and what decides the panel height (see DashPanel). Log it
+        // verbatim either way: an unrecognised part number is exactly what a new bike report needs.
+        let partNumber = NaviLite.partNumber(f.payload)
+        if let h = DashPanel.height(forPartNumber: partNumber) {
+            panelH = h; panelKnown = true
+            extLog("PillionExt: CCU part=\(partNumber) → panel \(DashPanel.width)×\(h)")
+        } else {
+            panelH = DashPanel.defaultHeight; panelKnown = false
+            extLog("PillionExt: CCU part=\(partNumber) unrecognised → probing \(DashPanel.candidateHeights)")
+        }
         conn.write(NaviLite.frame(6, 84, 1, NaviLite.secDataAckPayload(f.payload)))
         let setup: [(UInt8, UInt8, [UInt8])] = [
             (2, 0, [0, 0]), (31, 0, [1, 0]), (10, 0, [0, 0]), (11, 0, [0, 0]), (13, 0, [1, 0]), (12, 0, [0, 0]),
@@ -112,11 +128,12 @@ class SampleHandler: RPBroadcastSampleHandler {
         // Adaptive quality: a busy map at the user's quality (16-18 KB/frame) can cost 400-900ms
         // per frame on a choked link. Steer quality by measured ACK time, never above the setting.
         var q = jpegQuality
-        // Second knob past the quality floor: soften the image (Lanczos down/up, still 480×240 on
-        // the wire) so busy-map frames drop to ~4-6KB — the only way to hold 10+fps on this link.
+        // Second knob past the quality floor: soften the image (Lanczos down/up, still full panel size
+        // on the wire) so busy-map frames drop to ~4-6KB — the only way to hold 10+fps on this link.
         var detail: CGFloat = 1.0
         var lastSentPB: CVPixelBuffer?
         var inFlight: [Date] = []   // send timestamps of un-ACKed frames (FIFO, ≤2)
+        var everAcked = false       // has the dash ever decoded one of our frames? (panel probe)
         // Applies one measured ACK time to the two-stage controller: shed JPEG quality first; once
         // at the floor, shed detail (soft beats blocky on a map). Recover in reverse. Thresholds
         // are wider than stop-and-wait's because a windowed ACK includes overlap with the previous
@@ -144,13 +161,25 @@ class SampleHandler: RPBroadcastSampleHandler {
             // Window gate: block only when 2 frames are already un-ACKed.
             while running && inFlight.count >= 2 {
                 if awaitAck(1.0) {
+                    everAcked = true
                     steer(Date().timeIntervalSince(inFlight.removeFirst()))
                 } else {
                     // Timeout: dash silent or ACK lost. Drain any stragglers and reset the window
                     // so FIFO matching stays honest, and shed quality as congestion signal.
-                    while awaitAck(0.05) {}
+                    var drained = false
+                    while awaitAck(0.05) { drained = true }
+                    if drained { everAcked = true }
                     inFlight.removeAll()
                     steer(1.0)
+                    // Not one ACK since the handshake? A dash that can't decode the frame at all
+                    // stays silent in exactly this way — frames go out, nothing comes back, 0 fps —
+                    // and a wrong panel height is the likeliest cause. Step to the next candidate.
+                    // Skipped when the part number already named the model: then the geometry is
+                    // settled and silence means something else (link, HMI state, another app).
+                    if !everAcked && !panelKnown {
+                        panelH = DashPanel.nextCandidate(after: panelH)
+                        extLog("PillionExt: no ACK yet — retrying at \(DashPanel.width)×\(panelH)")
+                    }
                 }
             }
             if !running { break }
@@ -186,25 +215,28 @@ class SampleHandler: RPBroadcastSampleHandler {
         lock.lock(); latestPixels = pb; latestOrient = fix; lock.unlock()
     }
 
-    /// Downscale + letterbox to the 480×240 panel and JPEG-encode. Runs on the sender thread once per
-    /// sent frame. Broadcast extensions are killed past ~50 MB, so each encode gets its own pool.
+    /// Downscale + letterbox to the dash panel (480 × [panelH]) and JPEG-encode. Runs on the sender
+    /// thread once per sent frame. Broadcast extensions are killed past ~50 MB, so each encode gets
+    /// its own pool. Baseline JPEG allows any dimensions — 234/236 pad internally to the MCU grid —
+    /// so an odd panel height costs nothing here.
     private func encode(_ pb: CVPixelBuffer, _ orient: CGImagePropertyOrientation,
                         quality: Double, detail: CGFloat = 1.0) -> [UInt8]? {
         autoreleasepool {
+            let W = CGFloat(DashPanel.width), H = CGFloat(panelH)
             let img = CIImage(cvPixelBuffer: pb).oriented(orient)
             let e = img.extent
-            // Aspect-FIT (letterbox): whole screen centred on the 480×240 panel with black bars.
-            let scale = min(480.0 / e.width, 240.0 / e.height)
+            // Aspect-FIT (letterbox): whole screen centred on the panel with black bars.
+            let scale = min(W / e.width, H / e.height)
             let s = img.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
             let se = s.extent
-            let tx = (480 - se.width) / 2 - se.origin.x
-            let ty = (240 - se.height) / 2 - se.origin.y
+            let tx = (W - se.width) / 2 - se.origin.x
+            let ty = (H - se.height) / 2 - se.origin.y
             let centered = s.transformed(by: CGAffineTransform(translationX: tx, y: ty))
-            let canvas = CGRect(x: 0, y: 0, width: 480, height: 240)
+            let canvas = CGRect(x: 0, y: 0, width: W, height: H)
             var cropped = centered.composited(over: CIImage(color: .black).cropped(to: canvas)).cropped(to: canvas)
             if detail < 1.0 {
-                // Soften via Lanczos down + up on the final 480×240: kills the high-frequency map
-                // detail that dominates JPEG size (~detail² smaller frames). Wire stays 480×240.
+                // Soften via Lanczos down + up on the final panel: kills the high-frequency map
+                // detail that dominates JPEG size (~detail² smaller frames). Wire size is unchanged.
                 cropped = cropped
                     .applyingFilter("CILanczosScaleTransform",
                                     parameters: [kCIInputScaleKey: detail, kCIInputAspectRatioKey: 1.0])
