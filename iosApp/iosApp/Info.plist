@@ -42,6 +42,10 @@
 	<key>UISupportedExternalAccessoryProtocols</key>
 	<array>
 		<string>com.garmin.navilite.data</string>
+		<!-- Yamaha's own protocol on the same CCU. Not used to stream — declared so the accessory
+		     still shows up in the diagnostics screen when it withholds the navilite protocol,
+		     which tells "no accessory at all" apart from "accessory, wrong protocol". -->
+		<string>com.yconnect.data</string>
 		<!-- SDL transport protocols (iAP2). Must be present or SDLManager can't open the EAP session. -->
 		<string>com.smartdevicelink.prot0</string>
 		<string>com.smartdevicelink.prot1</string>
