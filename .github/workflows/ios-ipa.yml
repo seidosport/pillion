@@ -72,9 +72,30 @@ jobs:
           chmod +x gradlew iosApp/build-ipa.sh
           cd iosApp && ./build-ipa.sh Release
 
+      # A second, signature-free variant. build-ipa.sh ad-hoc signs inside-out so that a re-signer
+      # only has to *replace* an existing seal — but on iOS 26 that still got the extension SIGKILLed
+      # 9ms into launch with CODESIGNING "Invalid Page" (the app itself ran fine; only the nested
+      # appex's pages failed to match its seal). Strip every signature so the re-signer has to build
+      # the seal from scratch instead of replacing one. Which variant a given tool handles correctly
+      # is empirical, so ship both and let the installer pick.
+      - name: Build signature-free variant
+        run: |
+          cd iosApp
+          rm -rf nosign && mkdir nosign && cd nosign
+          unzip -q ../Pillion.ipa
+          find Payload -name '*.appex' -print0 | xargs -0 -I{} codesign --remove-signature {}
+          codesign --remove-signature Payload/iosApp.app
+          rm -rf Payload/iosApp.app/_CodeSignature
+          rm -rf Payload/iosApp.app/PlugIns/*.appex/_CodeSignature
+          zip -qry ../Pillion-nosign.ipa Payload
+          cd ..
+          ls -lh Pillion*.ipa
+
       - uses: actions/upload-artifact@v4
         with:
           name: Pillion-ipa
-          path: iosApp/Pillion.ipa
+          path: |
+            iosApp/Pillion.ipa
+            iosApp/Pillion-nosign.ipa
           if-no-files-found: error
           retention-days: 30
