@@ -22,6 +22,9 @@ struct SetupChoice: Equatable {
     var road = true            // svc 3  — suspected source of the bottom "Carretera" banner
     var speedLimit = true      // svc 17
     var appSettingPost = true  // closing svc 12 = 01 00
+    /// What the road-name field carries. Empty is what StreetCross sends, and what makes the dash
+    /// fall back to its own "Carretera" label.
+    var roadText = ""
 
     /// The burst in the order StreetCross sends it (mirrors Handshake.kt); omitted options are just
     /// dropped, leaving every other frame in its original position.
@@ -33,7 +36,7 @@ struct SetupChoice: Equatable {
         if gps { b.append((13, 0, [1, 0])) }
         b.append((12, 0, [0, 0]))
         if zoom { b.append((14, 1, NaviLite.hexB("07190600302e32206d69"))) }
-        if road { b.append((3, 1, [])) }
+        if road { b.append((3, 1, DashBanner.bytes(of: roadText))) }
         if speedLimit { b.append((17, 1, NaviLite.hexB("00000000036d7068"))) }
         if gps { b.append((13, 0, [1, 0])) }
         if appSettingPost { b.append((12, 0, [1, 0])) }

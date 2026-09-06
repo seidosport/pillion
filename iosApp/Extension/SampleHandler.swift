@@ -50,6 +50,8 @@ class SampleHandler: RPBroadcastSampleHandler {
     // read on the sender thread only (handshake and pushLoop run on the same detached thread).
     private var panelH = DashPanel.defaultHeight
     private var panelKnown = false
+    /// Which revision of the rider's banner text the dash has been told about. Sender-thread only.
+    private var sentBannerSeq = -1
 
     override func broadcastStarted(withSetupInfo setupInfo: [String: NSObject]?) {
         running = true
@@ -57,9 +59,13 @@ class SampleHandler: RPBroadcastSampleHandler {
         sendInterval = 1.0 / Double(BroadcastConfig.liveMaxFps())
         jpegQuality = BroadcastConfig.liveJpegQuality()
         extLog("PillionExt: settings — fps=\(BroadcastConfig.liveMaxFps()) quality=\(jpegQuality)")
+        // Observers first, then ask the app to replay its settings, and only then announce the
+        // start: the app acts on "started" too (it opens the nav app), and a request posted before
+        // the observers exist would answer into a process that isn't listening yet.
+        DashInsetState.shared.observe()
+        postDarwinNotification(DashConfig.request)
         BroadcastSignal.post(BroadcastSignal.started)
         DiagBeacon.shared.start()
-        DashInsetState.shared.observe()
         // Enumerate EVERY connected MFi accessory up front so a bike test is diagnosable even when the
         // protocol string doesn't match (otherwise we silently fall back to TCP and learn nothing about
         // what the CCU actually advertises). iOS only exposes MFi accessories here — if the bike isn't
@@ -117,9 +123,13 @@ class SampleHandler: RPBroadcastSampleHandler {
             extLog("PillionExt: CCU part=\(partNumber) unrecognised → probing \(DashPanel.candidateHeights)")
         }
         conn.write(NaviLite.frame(6, 84, 1, NaviLite.secDataAckPayload(f.payload)))
+        // Road name (svc 3) carries the rider's own line of text. Stock StreetCross sends it empty,
+        // and an empty road name is what leaves the dash's bottom banner showing its default label.
+        let road = DashBanner.bytes(of: DashInsetState.shared.banner)
+        sentBannerSeq = DashInsetState.shared.bannerSeq
         let setup: [(UInt8, UInt8, [UInt8])] = [
             (2, 0, [0, 0]), (31, 0, [1, 0]), (10, 0, [0, 0]), (11, 0, [0, 0]), (13, 0, [1, 0]), (12, 0, [0, 0]),
-            (14, 1, NaviLite.hexB("07190600302e32206d69")), (3, 1, []), (17, 1, NaviLite.hexB("00000000036d7068")),
+            (14, 1, NaviLite.hexB("07190600302e32206d69")), (3, 1, road), (17, 1, NaviLite.hexB("00000000036d7068")),
             (13, 0, [1, 0]), (12, 0, [1, 0])]
         for (s, p, pl) in setup { conn.write(NaviLite.frame(6, s, p, pl)) }
         DiagBeacon.shared.setPanel(height: panelH)
@@ -169,6 +179,16 @@ class SampleHandler: RPBroadcastSampleHandler {
             ackTotal += ackS
         }
         while running {
+            // Re-send the banner whenever the rider edits it. Done here rather than from the
+            // notification callback so this thread stays the link's only writer — two threads
+            // interleaving frames onto one iAP2 stream would corrupt both.
+            let bseq = DashInsetState.shared.bannerSeq
+            if bseq != sentBannerSeq {
+                sentBannerSeq = bseq
+                let text = DashInsetState.shared.banner
+                conn.write(NaviLite.frame(6, 3, 1, DashBanner.bytes(of: text)))
+                extLog("PillionExt: banner = \(text)")
+            }
             let wait = sendInterval - Date().timeIntervalSince(lastSend)
             if wait > 0 { usleep(UInt32(wait * 1_000_000)) }
             lock.lock(); let pb = latestPixels; let o = latestOrient; lock.unlock()
@@ -249,25 +269,40 @@ class SampleHandler: RPBroadcastSampleHandler {
                         quality: Double, detail: CGFloat = 1.0) -> [UInt8]? {
         autoreleasepool {
             let W = CGFloat(DashPanel.width), H = CGFloat(panelH)
+            let cfg = DashInsetState.shared.layout
             let img = CIImage(cvPixelBuffer: pb).oriented(orient)
-            let e = img.extent
-            // Fit into the safe area, not the whole panel: the dash paints translucent chrome of
+            let full = img.extent
+            // Throw away the phone's own furniture *before* scaling. Everything that survives then
+            // scales up by the same factor, which is the whole point: a whole phone screen squeezed
+            // into a 480×234 panel is legible on a desk and useless at a glance on a moving bike.
+            // CoreImage's origin is bottom-left, so "top" is the high-y end.
+            let cutT = full.height * cfg.percent(.top)
+            let cutB = full.height * cfg.percent(.bottom)
+            let cutL = full.width * cfg.percent(.left)
+            let cutR = full.width * cfg.percent(.right)
+            let src = CGRect(x: full.minX + cutL, y: full.minY + cutB,
+                             width: max(1, full.width - cutL - cutR),
+                             height: max(1, full.height - cutT - cutB))
+            let trimmed = img.cropped(to: src)
+            let e = trimmed.extent
+            // Land it in the safe area, not the whole panel: the dash paints translucent chrome of
             // its own over the image — a navigation banner along the bottom, zoom arrows down the
-            // left edge — and a map under either is cluttered past reading. CoreImage's origin is
-            // bottom-left, so the dash's bottom rows are the low-y end here.
-            let insetB = min(CGFloat(DashInsetState.shared.bottom), H / 2)
-            let insetL = min(CGFloat(DashInsetState.shared.left), W / 2)
+            // left edge — and a map under either is cluttered past reading.
+            let insetB = min(CGFloat(cfg.bottom), H / 2)
+            let insetL = min(CGFloat(cfg.left), W / 2)
             let safe = CGRect(x: insetL, y: insetB, width: W - insetL, height: H - insetB)
-            // FIT letterboxes the whole screen into the safe area; CROP fills it and lets the
-            // screen's long edge run off, which is what makes an upright phone readable on a 2:1
-            // panel instead of a sliver between two black slabs.
-            let scale = DashInsetState.shared.fill == .crop
+            // FIT letterboxes what's left into the safe area; CROP fills it and lets the long edge
+            // run off, which is what makes an upright phone readable on a 2:1 panel.
+            let scale = cfg.fill == .crop
                 ? max(safe.width / e.width, safe.height / e.height)
                 : min(safe.width / e.width, safe.height / e.height)
-            let s = img.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+            let s = trimmed.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
             let se = s.extent
+            // Centred across, but pinned to the *bottom* of the safe area: the bottom of a
+            // navigation screen is the next-turn strip, so any slack or overflow is taken off the
+            // top, never off the edge sitting just above the dash's banner.
             let tx = safe.minX + (safe.width - se.width) / 2 - se.origin.x
-            let ty = safe.minY + (safe.height - se.height) / 2 - se.origin.y
+            let ty = safe.minY - se.origin.y
             let centered = s.transformed(by: CGAffineTransform(translationX: tx, y: ty))
             let canvas = CGRect(x: 0, y: 0, width: W, height: H)
             // Clamp to the safe area first so a CROP overflow can't spill under the dash's chrome.
