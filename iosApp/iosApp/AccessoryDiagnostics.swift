@@ -22,6 +22,8 @@ struct AccessoryDiagnostics: View {
     @State private var setup = SetupChoice()
     @AppStorage("dash.inset.bottom") private var insetBottom = DashInset.defaultBottom
     @AppStorage("dash.inset.left") private var insetLeft = DashInset.defaultLeft
+    @AppStorage("dash.fill") private var fillRaw = DashFill.fit.rawValue
+    @AppStorage("launch.nav.app") private var launchNavApp = false
 
     private static let navProtocol = "com.garmin.navilite.data"
 
@@ -82,11 +84,23 @@ struct AccessoryDiagnostics: View {
                         }
                     }
                     .onChange(of: insetLeft) { _ in postDarwinNotification(DashInset.leftName(insetLeft)) }
+                    Picker("Encaje", selection: $fillRaw) {
+                        ForEach(DashFill.allCases, id: \.rawValue) { Text($0.label).tag($0.rawValue) }
+                    }
+                    .onChange(of: fillRaw) { _ in postDarwinNotification(fillRaw) }
                     Button("Reenviar al capturador") {
                         postDarwinNotification(DashInset.bottomName(insetBottom))
                         postDarwinNotification(DashInset.leftName(insetLeft))
+                        postDarwinNotification(fillRaw)
                     }
                     .font(.callout)
+                }
+                Section("Al empezar a transmitir") {
+                    Toggle("Abrir Waze automáticamente", isOn: $launchNavApp)
+                    Text("iOS no deja que ninguna app fuerce el horizontal en otra. Gira el móvil "
+                         + "tú y quita el bloqueo de rotación; si prefieres llevarlo vertical, usa "
+                         + "«Recortar» arriba.")
+                        .font(.footnote).foregroundStyle(.secondary)
                 }
                 // Which of the optional setup messages to send. Each is a suspect for a piece of the
                 // dash's own chrome; only the bike can say which, so they are switches rather than a
@@ -225,7 +239,7 @@ struct AccessoryDiagnostics: View {
         } else {
             s += "CAPTURADOR: sin señal — no dijo nada.\n"
         }
-        s += "ZONA ÚTIL: abajo \(insetBottom) px, izquierda \(insetLeft) px\n"
+        s += "ZONA ÚTIL: abajo \(insetBottom) px, izquierda \(insetLeft) px, encaje \(fillRaw)\n"
         s += "SALUDO: [\(setup.tags)]\n"
         if !probe.lines.isEmpty {
             s += "\nPRUEBA DIRECTA:\n" + probe.lines.map { "  \($0)" }.joined(separator: "\n") + "\n"

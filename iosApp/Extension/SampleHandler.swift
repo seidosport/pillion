@@ -258,15 +258,21 @@ class SampleHandler: RPBroadcastSampleHandler {
             let insetB = min(CGFloat(DashInsetState.shared.bottom), H / 2)
             let insetL = min(CGFloat(DashInsetState.shared.left), W / 2)
             let safe = CGRect(x: insetL, y: insetB, width: W - insetL, height: H - insetB)
-            // Aspect-FIT (letterbox): whole screen centred in the safe area with black around it.
-            let scale = min(safe.width / e.width, safe.height / e.height)
+            // FIT letterboxes the whole screen into the safe area; CROP fills it and lets the
+            // screen's long edge run off, which is what makes an upright phone readable on a 2:1
+            // panel instead of a sliver between two black slabs.
+            let scale = DashInsetState.shared.fill == .crop
+                ? max(safe.width / e.width, safe.height / e.height)
+                : min(safe.width / e.width, safe.height / e.height)
             let s = img.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
             let se = s.extent
             let tx = safe.minX + (safe.width - se.width) / 2 - se.origin.x
             let ty = safe.minY + (safe.height - se.height) / 2 - se.origin.y
             let centered = s.transformed(by: CGAffineTransform(translationX: tx, y: ty))
             let canvas = CGRect(x: 0, y: 0, width: W, height: H)
-            var cropped = centered.composited(over: CIImage(color: .black).cropped(to: canvas)).cropped(to: canvas)
+            // Clamp to the safe area first so a CROP overflow can't spill under the dash's chrome.
+            var cropped = centered.cropped(to: safe)
+                .composited(over: CIImage(color: .black).cropped(to: canvas)).cropped(to: canvas)
             if detail < 1.0 {
                 // Soften via Lanczos down + up on the final panel: kills the high-frequency map
                 // detail that dominates JPEG size (~detail² smaller frames). Wire size is unchanged.

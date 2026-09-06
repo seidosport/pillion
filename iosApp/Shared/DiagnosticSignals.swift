@@ -152,6 +152,25 @@ enum DashInset {
     static func leftName(_ v: Int) -> String { "app.pillion.cfg.inset.left.\(v)" }
 }
 
+/// How the phone's screen is mapped onto the dash's safe area.
+///
+/// The panel is roughly 2:1 and a phone held upright is roughly 1:2, so fitting the whole screen
+/// into it leaves a sliver of image between two black slabs — legible on a desk, useless at a
+/// glance on a moving bike. iOS gives no app a way to force another app into landscape (only the
+/// rider can, by turning the phone with rotation lock off), so the other half of the answer has to
+/// live here: crop to a band of the screen at full size instead of shrinking all of it.
+enum DashFill: String, CaseIterable {
+    case fit  = "app.pillion.cfg.fill.fit"
+    case crop = "app.pillion.cfg.fill.crop"
+
+    var label: String {
+        switch self {
+        case .fit:  return "Encoger (se ve todo)"
+        case .crop: return "Recortar (se ve grande)"
+        }
+    }
+}
+
 /// The extension's live view of the safe area. Written from the notification callback, read once
 /// per encoded frame on the sender thread.
 final class DashInsetState {
@@ -160,9 +179,11 @@ final class DashInsetState {
     private let lock = NSLock()
     private var _bottom = DashInset.defaultBottom
     private var _left = DashInset.defaultLeft
+    private var _fill = DashFill.fit
 
     var bottom: Int { lock.lock(); defer { lock.unlock() }; return _bottom }
     var left: Int { lock.lock(); defer { lock.unlock() }; return _left }
+    var fill: DashFill { lock.lock(); defer { lock.unlock() }; return _fill }
 
     func observe() {
         let center = CFNotificationCenterGetDarwinNotifyCenter()
@@ -180,11 +201,16 @@ final class DashInsetState {
             CFNotificationCenterAddObserver(center, me, callback,
                                             DashInset.leftName(v) as CFString, nil, .deliverImmediately)
         }
+        for f in DashFill.allCases {
+            CFNotificationCenterAddObserver(center, me, callback,
+                                            f.rawValue as CFString, nil, .deliverImmediately)
+        }
     }
 
     private func apply(_ name: String) {
         lock.lock(); defer { lock.unlock() }
         for v in DashInset.bottomChoices where name == DashInset.bottomName(v) { _bottom = v; return }
         for v in DashInset.leftChoices where name == DashInset.leftName(v) { _left = v; return }
+        if let f = DashFill(rawValue: name) { _fill = f; return }
     }
 }

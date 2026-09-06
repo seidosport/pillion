@@ -47,6 +47,21 @@ final class BroadcastBridge: ObservableObject {
         button.sendActions(for: .touchUpInside)
     }
 
+    /// Hand the rider straight to the navigation app once the mirror is live.
+    ///
+    /// Only the app can do this — an extension has no `UIApplication` — and only right here: the
+    /// broadcast starts with Pillion in the foreground (the system picker was just dismissed over
+    /// it), which is the one moment iOS will honour an app-to-app open. A beat's delay lets the
+    /// picker finish dismissing first, or the open lands on a view controller that's going away.
+    func launchNavAppIfWanted() {
+        guard UserDefaults.standard.bool(forKey: "launch.nav.app") else { return }
+        guard let url = URL(string: "waze://") else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            guard UIApplication.shared.canOpenURL(url) else { return }
+            UIApplication.shared.open(url)
+        }
+    }
+
     private static func firstButton(in view: UIView) -> UIButton? {
         if let button = view as? UIButton { return button }
         for sub in view.subviews { if let b = firstButton(in: sub) { return b } }
@@ -60,7 +75,10 @@ final class BroadcastBridge: ObservableObject {
             guard let observer = observer, let name = name else { return }
             let bridge = Unmanaged<BroadcastBridge>.fromOpaque(observer).takeUnretainedValue()
             let active = (name.rawValue as String) == "app.pillion.broadcast.started"
-            DispatchQueue.main.async { bridge.controller.setActive(active: active) }
+            DispatchQueue.main.async {
+                bridge.controller.setActive(active: active)
+                if active { bridge.launchNavAppIfWanted() }
+            }
         }
         for name in ["app.pillion.broadcast.started", "app.pillion.broadcast.stopped"] {
             CFNotificationCenterAddObserver(center, me, callback, name as CFString, nil, .deliverImmediately)

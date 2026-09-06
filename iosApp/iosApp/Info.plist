@@ -34,6 +34,13 @@
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Pillion connects to the NaviLite dash emulator on your local network during development.</string>
+	<!-- canOpenURL is gated on this list; without it the "open the nav app when the mirror
+	     starts" handoff silently declines even though the app is installed. -->
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>waze</string>
+		<string>comgooglemaps</string>
+	</array>
 	<key>UIBackgroundModes</key>
 	<array>
 		<!-- SDL keeps the iAP2 session alive while the app is backgrounded (the dash is foreground). -->
