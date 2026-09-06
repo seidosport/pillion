@@ -20,14 +20,7 @@ struct AccessoryDiagnostics: View {
     @State private var accessories: [EAAccessory] = []
     @State private var copied = false
     @State private var setup = SetupChoice()
-    @AppStorage("dash.inset.bottom") private var insetBottom = DashInset.defaultBottom
-    @AppStorage("dash.inset.left") private var insetLeft = DashInset.defaultLeft
-    @AppStorage("dash.fill") private var fillRaw = DashFill.fallback.rawValue
     @AppStorage("launch.nav.app") private var launchNavApp = false
-    @AppStorage("dash.crop.top") private var cropTop = DashCropSide.top.defaultPercent
-    @AppStorage("dash.crop.bottom") private var cropBottom = DashCropSide.bottom.defaultPercent
-    @AppStorage("dash.crop.left") private var cropLeft = DashCropSide.left.defaultPercent
-    @AppStorage("dash.crop.right") private var cropRight = DashCropSide.right.defaultPercent
     @AppStorage("dash.banner") private var banner = ""
 
     private static let navProtocol = "com.garmin.navilite.data"
@@ -70,41 +63,6 @@ struct AccessoryDiagnostics: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                // Adjustable while a broadcast is live: the dash's chrome is translucent, so how
-                // much image to give up to it is a judgement the rider makes looking at the dash.
-                // Travels as a Darwin notification because the extension can't read these settings
-                // (see DashInset) — which also means it reaches the *running* mirror instantly.
-                Section("Qué se ve del móvil") {
-                    Text("Recorta los bordes del móvil para que lo demás llegue más grande al "
-                         + "tablero. Abajo va en 0 % a propósito: ahí está la flecha del próximo "
-                         + "giro. Ajústalo con la transmisión en marcha y mira el tablero.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                    cropPicker(.top, $cropTop)
-                    cropPicker(.left, $cropLeft)
-                    cropPicker(.right, $cropRight)
-                    cropPicker(.bottom, $cropBottom)
-                    Picker("Encaje", selection: $fillRaw) {
-                        ForEach(DashFill.allCases, id: \.rawValue) { Text($0.label).tag($0.rawValue) }
-                    }
-                    .onChange(of: fillRaw) { _ in postDarwinNotification(fillRaw) }
-                }
-                Section("Zona útil del tablero") {
-                    Text("La franja negra de abajo la dibuja la moto y no se puede quitar. Estos "
-                         + "márgenes dejan hueco para que no tape la imagen.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                    Picker("Margen abajo", selection: $insetBottom) {
-                        ForEach(DashInset.bottomChoices, id: \.self) {
-                            Text($0 == 0 ? "sin margen" : "\($0) px")
-                        }
-                    }
-                    .onChange(of: insetBottom) { _ in postDarwinNotification(DashInset.bottomName(insetBottom)) }
-                    Picker("Margen izquierda", selection: $insetLeft) {
-                        ForEach(DashInset.leftChoices, id: \.self) {
-                            Text($0 == 0 ? "sin margen" : "\($0) px")
-                        }
-                    }
-                    .onChange(of: insetLeft) { _ in postDarwinNotification(DashInset.leftName(insetLeft)) }
-                }
                 // The banner is the dash's road-name field. Stock StreetCross leaves it empty,
                 // which is precisely why the dash falls back to its own "Carretera" label — so
                 // writing anything at all into it replaces that.
@@ -120,17 +78,10 @@ struct AccessoryDiagnostics: View {
                          + "botón o la tecla «intro».")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
-                Section {
-                    Button("Reenviar todo al capturador") { DashSettings.pushAll() }
-                        .font(.callout)
-                    Text("Por si el capturador arrancó antes de que cambiaras algo.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
                 Section("Al empezar a transmitir") {
                     Toggle("Abrir Waze automáticamente", isOn: $launchNavApp)
                     Text("iOS no deja que ninguna app fuerce el horizontal en otra. Gira el móvil "
-                         + "tú y quita el bloqueo de rotación; si prefieres llevarlo vertical, usa "
-                         + "«Recortar» arriba.")
+                         + "tú y quita el bloqueo de rotación.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 // Which of the optional setup messages to send. Each is a suspect for a piece of the
@@ -247,15 +198,6 @@ struct AccessoryDiagnostics: View {
         .onAppear(perform: refresh)
     }
 
-    @ViewBuilder private func cropPicker(_ side: DashCropSide, _ value: Binding<Int>) -> some View {
-        Picker(side.label, selection: value) {
-            ForEach(DashCrop.choices, id: \.self) { Text($0 == 0 ? "nada" : "\($0) %") }
-        }
-        .onChange(of: value.wrappedValue) { _ in
-            postDarwinNotification(DashCrop.name(side, value.wrappedValue))
-        }
-    }
-
     @ViewBuilder private func row(_ label: String, _ value: String) -> some View {
         HStack {
             Text(label).font(.caption).foregroundStyle(.secondary)
@@ -287,8 +229,6 @@ struct AccessoryDiagnostics: View {
         } else {
             s += "CAPTURADOR: sin señal — no dijo nada.\n"
         }
-        s += "ZONA ÚTIL: abajo \(insetBottom) px, izquierda \(insetLeft) px, encaje \(fillRaw)\n"
-        s += "RECORTE: arriba \(cropTop)%, abajo \(cropBottom)%, izq \(cropLeft)%, der \(cropRight)%\n"
         s += "FRANJA: \(banner.isEmpty ? "(vacía — el tablero pone «Carretera»)" : banner)\n"
         s += "SALUDO: [\(setup.tags)]\n"
         if !probe.lines.isEmpty {

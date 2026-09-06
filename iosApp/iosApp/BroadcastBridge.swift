@@ -2,35 +2,11 @@ import SwiftUI
 import ReplayKit
 import ComposeApp
 
-/// The app's copy of everything the extension can be told, and the one place that sends it.
-///
-/// Kept together because it is only ever used as a set: a single change is posted the moment the
-/// rider makes it, and the whole lot is replayed when the extension asks for it — it starts with no
-/// way to read these itself (see DashInset). Keys match the `@AppStorage` names in the diagnostics
-/// screen, which is the only writer.
+/// The one line of the rider's own text the extension can be told about, and the one place that
+/// sends it. The key matches the `@AppStorage` name in the diagnostics screen, its only writer.
 enum DashSettings {
-    static func bottom() -> Int { int("dash.inset.bottom", DashInset.defaultBottom) }
-    static func left() -> Int { int("dash.inset.left", DashInset.defaultLeft) }
-    static func crop(_ side: DashCropSide) -> Int { int(cropKey(side), side.defaultPercent) }
-    static func fill() -> String { UserDefaults.standard.string(forKey: "dash.fill") ?? DashFill.fallback.rawValue }
     static func banner() -> String { UserDefaults.standard.string(forKey: "dash.banner") ?? "" }
-
-    static func cropKey(_ side: DashCropSide) -> String { "dash.crop.\(side.rawValue)" }
-
-    /// Unset is not zero: someone who never opens the settings screen still gets the measured
-    /// defaults, and `UserDefaults.integer` would hand back 0 for every one of them.
-    private static func int(_ key: String, _ fallback: Int) -> Int {
-        UserDefaults.standard.object(forKey: key) == nil
-            ? fallback : UserDefaults.standard.integer(forKey: key)
-    }
-
-    static func pushAll() {
-        postDarwinNotification(DashInset.bottomName(bottom()))
-        postDarwinNotification(DashInset.leftName(left()))
-        postDarwinNotification(fill())
-        for side in DashCropSide.allCases { postDarwinNotification(DashCrop.name(side, crop(side))) }
-        DashBanner.post(banner())
-    }
+    static func pushAll() { DashBanner.post(banner()) }
 }
 
 /// Connects the shared Compose UI to iOS screen broadcasting:

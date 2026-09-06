@@ -1,5 +1,4 @@
 import Foundation
-import CoreGraphics
 
 /// A one-way trace from the broadcast extension to the app.
 ///
@@ -125,75 +124,17 @@ final class DiagBeacon {
     }
 }
 
-/// Live layout control, app → extension.
-///
-/// Two independent decisions live here, and only a rider looking at the dash can settle either.
-///
-/// 1. *What to leave clear at the panel's edges.* The dash paints translucent chrome of its own
-///    over whatever image it is handed — a navigation banner along the bottom (top edge measured
-///    near y≈170 of 234 on a LinkCard/IXWW22) and zoom arrows down the left. Tried on the bike:
-///    none of the optional setup messages turn the banner off, so it is the dash's own furniture
-///    and the image simply has to stop short of it (see DashBanner for what to do with it instead).
-/// 2. *What to give up from the phone's screen.* Fitting a whole phone screen into what is left of
-///    a 480×234 panel puts everything on the dash too small to read at a glance — measured on the
-///    bike, and the reason this second knob exists. Trimming the screen's own furniture first
-///    (status bar and app chrome at the top, buttons down the sides) leaves a smaller region to
-///    scale up, so what survives lands bigger.
+/// Live control, app -> extension.
 ///
 /// The extension can't read the app's settings: an App Group needs an entitlement a free Apple ID
 /// can't grant, and asking for one gets the extension killed at launch. Darwin notifications carry
-/// no payload but need no entitlement, so — mirroring the diagnostic beacon going the other way —
-/// the value travels in the *name*: one name per offered value. The rider steps through them with
-/// the broadcast live and stops at the one that looks right. No rebuild, no reinstall, and a
-/// sideload costs two of a free Apple ID's ten weekly App IDs.
-enum DashInset {
-    /// Rows to keep clear at the bottom, under the dash's navigation banner.
-    static let bottomChoices = [0, 50, 60, 64, 70, 80]
-    /// Columns to keep clear on the left, under the dash's zoom arrows.
-    static let leftChoices = [0, 20, 30, 40, 60]
-
-    /// Measured on a 2024 XMAX 300 (LinkCard, part 006-B3952-10): the banner's top edge reads
-    /// between the 160 and 180 rules, so 64 rows clears it with a little margin.
-    static let defaultBottom = 64
-    static let defaultLeft = 0
-
-    static func bottomName(_ v: Int) -> String { "app.pillion.cfg.inset.bottom.\(v)" }
-    static func leftName(_ v: Int) -> String { "app.pillion.cfg.inset.left.\(v)" }
-}
-
-/// Which edge of the *phone's* screen a trim comes off. Percentages, not pixels: the same setting
-/// then means the same thing whatever the phone, and whichever way round it is being held.
-enum DashCropSide: String, CaseIterable {
-    case top, bottom, left, right
-
-    var label: String {
-        switch self {
-        case .top:    return "Quitar arriba"
-        case .bottom: return "Quitar abajo"
-        case .left:   return "Quitar izquierda"
-        case .right:  return "Quitar derecha"
-        }
-    }
-
-    /// Defaults chosen on the bike: the top of a phone screen is status bar and app chrome and the
-    /// sides are buttons, none of which a rider reads at a glance — but the *bottom* holds the
-    /// next-turn strip in every navigation app, so nothing is taken from there.
-    var defaultPercent: Int {
-        switch self {
-        case .top:    return 15
-        case .bottom: return 0
-        case .left:   return 15
-        case .right:  return 15
-        }
-    }
-}
-
-enum DashCrop {
-    static let choices = [0, 5, 10, 15, 20, 25, 30, 40]
-    static func name(_ side: DashCropSide, _ v: Int) -> String {
-        "app.pillion.cfg.crop.\(side.rawValue).\(v)"
-    }
-}
+/// no payload but need no entitlement, so - mirroring the diagnostic beacon going the other way -
+/// what the rider chooses travels in the notification *name*. It reaches the mirror while it is
+/// running, which matters when a reinstall costs two of a free Apple ID's ten weekly App IDs.
+///
+/// Geometry used to be steered from here too - trimming the phone's edges, holding the image clear
+/// of the dash's chrome. Tried on the bike, both made the image worse than sending it whole, and
+/// the code is gone. What survives is the one thing that did work: the banner text.
 
 /// A short line of the rider's own text, for the dash's bottom banner.
 ///
@@ -242,58 +183,18 @@ enum DashBanner {
 }
 
 enum DashConfig {
-    /// Posted by the extension once its observers exist, asking the app to send everything again.
-    /// Darwin notifications aren't queued, so anything the rider changed while no broadcast was
-    /// running would otherwise be invisible to the mirror that starts afterwards — the extension
-    /// would silently come up on defaults.
+    /// Posted by the extension once its observers exist, asking the app to send the banner again.
+    /// Darwin notifications aren't queued, so text typed while no broadcast was running would
+    /// otherwise be invisible to the mirror that starts afterwards.
     static let request = "app.pillion.cfg.request"
 }
 
-/// How the phone's screen is mapped onto the dash's safe area.
-///
-/// The panel is roughly 2:1 and a phone held upright is roughly 1:2, so fitting the whole screen
-/// into it leaves a sliver of image between two black slabs — legible on a desk, useless at a
-/// glance on a moving bike. iOS gives no app a way to force another app into landscape (only the
-/// rider can, by turning the phone with rotation lock off), so the other half of the answer has to
-/// live here: crop to a band of the screen at full size instead of shrinking all of it.
-enum DashFill: String, CaseIterable {
-    case fit  = "app.pillion.cfg.fill.fit"
-    case crop = "app.pillion.cfg.fill.crop"
-
-    /// Crop, because fitting is what made the mirror unreadable on the bike: no phone screen is
-    /// anything like 2.8:1, so fitting one whole always leaves a sliver between black slabs. Losing
-    /// part of the image is the price of the rest of it being big enough to read at a glance.
-    static let fallback = DashFill.crop
-
-    var label: String {
-        switch self {
-        case .fit:  return "Encoger (cabe todo, se ve pequeño)"
-        case .crop: return "Recortar (llena el tablero)"
-        }
-    }
-}
-
-/// Everything the encoder needs about geometry, read in one go so a frame can't be built from half
-/// of an old setting and half of a new one.
-struct DashLayout {
-    var bottom: Int
-    var left: Int
-    var crop: [DashCropSide: Int]
-    var fill: DashFill
-
-    func percent(_ side: DashCropSide) -> CGFloat { CGFloat(crop[side] ?? 0) / 100 }
-}
-
-/// The extension's live view of the layout. Written from the notification callback, read once per
-/// encoded frame on the sender thread.
-final class DashInsetState {
-    static let shared = DashInsetState()
+/// The extension's live view of the rider's banner text. Written from the notification callback,
+/// read on the sender thread.
+final class DashBannerState {
+    static let shared = DashBannerState()
 
     private let lock = NSLock()
-    private var _bottom = DashInset.defaultBottom
-    private var _left = DashInset.defaultLeft
-    private var _fill = DashFill.fallback
-    private var _crop = Dictionary(uniqueKeysWithValues: DashCropSide.allCases.map { ($0, $0.defaultPercent) })
     private var _banner = ""
     /// Bumped on every completed banner; the sender thread watches it to know when to re-send the
     /// road-name frame, so the text reaches the dash without a second writer touching the link.
@@ -301,10 +202,6 @@ final class DashInsetState {
     private var _rx: [UInt8] = []
     private var _receiving = false
 
-    var layout: DashLayout {
-        lock.lock(); defer { lock.unlock() }
-        return DashLayout(bottom: _bottom, left: _left, crop: _crop, fill: _fill)
-    }
     var banner: String { lock.lock(); defer { lock.unlock() }; return _banner }
     var bannerSeq: Int { lock.lock(); defer { lock.unlock() }; return _bannerSeq }
 
@@ -313,17 +210,11 @@ final class DashInsetState {
         let me = Unmanaged.passUnretained(self).toOpaque()
         let callback: CFNotificationCallback = { _, observer, name, _, _ in
             guard let observer = observer, let name = name else { return }
-            let state = Unmanaged<DashInsetState>.fromOpaque(observer).takeUnretainedValue()
+            let state = Unmanaged<DashBannerState>.fromOpaque(observer).takeUnretainedValue()
             state.apply(name.rawValue as String)
         }
         func watch(_ name: String) {
             CFNotificationCenterAddObserver(center, me, callback, name as CFString, nil, .deliverImmediately)
-        }
-        for v in DashInset.bottomChoices { watch(DashInset.bottomName(v)) }
-        for v in DashInset.leftChoices { watch(DashInset.leftName(v)) }
-        for f in DashFill.allCases { watch(f.rawValue) }
-        for side in DashCropSide.allCases {
-            for v in DashCrop.choices { watch(DashCrop.name(side, v)) }
         }
         watch(DashBanner.begin)
         watch(DashBanner.end)
@@ -335,17 +226,6 @@ final class DashInsetState {
 
     private func apply(_ name: String) {
         lock.lock(); defer { lock.unlock() }
-        for v in DashInset.bottomChoices where name == DashInset.bottomName(v) { _bottom = v; return }
-        for v in DashInset.leftChoices where name == DashInset.leftName(v) { _left = v; return }
-        if let f = DashFill(rawValue: name) { _fill = f; return }
-        for side in DashCropSide.allCases {
-            for v in DashCrop.choices where name == DashCrop.name(side, v) { _crop[side] = v; return }
-        }
-        applyBanner(name)
-    }
-
-    /// Caller holds the lock.
-    private func applyBanner(_ name: String) {
         if name == DashBanner.begin { _rx = []; _receiving = true; return }
         if name == DashBanner.end {
             guard _receiving else { return }
