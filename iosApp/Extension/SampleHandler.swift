@@ -59,6 +59,7 @@ class SampleHandler: RPBroadcastSampleHandler {
         extLog("PillionExt: settings — fps=\(BroadcastConfig.liveMaxFps()) quality=\(jpegQuality)")
         BroadcastSignal.post(BroadcastSignal.started)
         DiagBeacon.shared.start()
+        DashInsetState.shared.observe()
         // Enumerate EVERY connected MFi accessory up front so a bike test is diagnosable even when the
         // protocol string doesn't match (otherwise we silently fall back to TCP and learn nothing about
         // what the CCU actually advertises). iOS only exposes MFi accessories here — if the bike isn't
@@ -250,12 +251,19 @@ class SampleHandler: RPBroadcastSampleHandler {
             let W = CGFloat(DashPanel.width), H = CGFloat(panelH)
             let img = CIImage(cvPixelBuffer: pb).oriented(orient)
             let e = img.extent
-            // Aspect-FIT (letterbox): whole screen centred on the panel with black bars.
-            let scale = min(W / e.width, H / e.height)
+            // Fit into the safe area, not the whole panel: the dash paints translucent chrome of
+            // its own over the image — a navigation banner along the bottom, zoom arrows down the
+            // left edge — and a map under either is cluttered past reading. CoreImage's origin is
+            // bottom-left, so the dash's bottom rows are the low-y end here.
+            let insetB = min(CGFloat(DashInsetState.shared.bottom), H / 2)
+            let insetL = min(CGFloat(DashInsetState.shared.left), W / 2)
+            let safe = CGRect(x: insetL, y: insetB, width: W - insetL, height: H - insetB)
+            // Aspect-FIT (letterbox): whole screen centred in the safe area with black around it.
+            let scale = min(safe.width / e.width, safe.height / e.height)
             let s = img.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
             let se = s.extent
-            let tx = (W - se.width) / 2 - se.origin.x
-            let ty = (H - se.height) / 2 - se.origin.y
+            let tx = safe.minX + (safe.width - se.width) / 2 - se.origin.x
+            let ty = safe.minY + (safe.height - se.height) / 2 - se.origin.y
             let centered = s.transformed(by: CGAffineTransform(translationX: tx, y: ty))
             let canvas = CGRect(x: 0, y: 0, width: W, height: H)
             var cropped = centered.composited(over: CIImage(color: .black).cropped(to: canvas)).cropped(to: canvas)

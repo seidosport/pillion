@@ -123,3 +123,68 @@ final class DiagBeacon {
         if let panel = self.panel { postDarwinNotification(panel.rawValue) }
     }
 }
+
+/// Live safe-area control, app → extension.
+///
+/// The dash paints its own translucent chrome over whatever image it is given: a navigation banner
+/// along the bottom (top edge measured near y≈170 of 234 on a LinkCard/IXWW22) and zoom arrows down
+/// the left edge. Content under them is dimmed and cluttered rather than erased, so how much to
+/// give up is a judgement call — one that can only be made by a rider looking at the dash.
+///
+/// The extension can't read the app's settings: an App Group needs an entitlement a free Apple ID
+/// can't grant, and asking for one gets the extension killed at launch. Darwin notifications carry
+/// no payload but need no entitlement, so — mirroring the diagnostic beacon going the other way —
+/// the value travels in the *name*: one name per offered value. The rider steps through them with
+/// the broadcast live and stops at the one that looks right. No rebuild, no reinstall, and a
+/// sideload costs two of a free Apple ID's ten weekly App IDs.
+enum DashInset {
+    /// Rows to keep clear at the bottom, under the dash's navigation banner.
+    static let bottomChoices = [0, 50, 60, 64, 70, 80]
+    /// Columns to keep clear on the left, under the dash's zoom arrows.
+    static let leftChoices = [0, 20, 30, 40, 60]
+
+    /// Measured on a 2024 XMAX 300 (LinkCard, part 006-B3952-10): the banner's top edge reads
+    /// between the 160 and 180 rules, so 64 rows clears it with a little margin.
+    static let defaultBottom = 64
+    static let defaultLeft = 0
+
+    static func bottomName(_ v: Int) -> String { "app.pillion.cfg.inset.bottom.\(v)" }
+    static func leftName(_ v: Int) -> String { "app.pillion.cfg.inset.left.\(v)" }
+}
+
+/// The extension's live view of the safe area. Written from the notification callback, read once
+/// per encoded frame on the sender thread.
+final class DashInsetState {
+    static let shared = DashInsetState()
+
+    private let lock = NSLock()
+    private var _bottom = DashInset.defaultBottom
+    private var _left = DashInset.defaultLeft
+
+    var bottom: Int { lock.lock(); defer { lock.unlock() }; return _bottom }
+    var left: Int { lock.lock(); defer { lock.unlock() }; return _left }
+
+    func observe() {
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+        let me = Unmanaged.passUnretained(self).toOpaque()
+        let callback: CFNotificationCallback = { _, observer, name, _, _ in
+            guard let observer = observer, let name = name else { return }
+            let state = Unmanaged<DashInsetState>.fromOpaque(observer).takeUnretainedValue()
+            state.apply(name.rawValue as String)
+        }
+        for v in DashInset.bottomChoices {
+            CFNotificationCenterAddObserver(center, me, callback,
+                                            DashInset.bottomName(v) as CFString, nil, .deliverImmediately)
+        }
+        for v in DashInset.leftChoices {
+            CFNotificationCenterAddObserver(center, me, callback,
+                                            DashInset.leftName(v) as CFString, nil, .deliverImmediately)
+        }
+    }
+
+    private func apply(_ name: String) {
+        lock.lock(); defer { lock.unlock() }
+        for v in DashInset.bottomChoices where name == DashInset.bottomName(v) { _bottom = v; return }
+        for v in DashInset.leftChoices where name == DashInset.leftName(v) { _left = v; return }
+    }
+}

@@ -19,8 +19,17 @@ struct AccessoryDiagnostics: View {
     @Environment(\.dismiss) private var dismiss
     @State private var accessories: [EAAccessory] = []
     @State private var copied = false
+    @State private var setup = SetupChoice()
+    @AppStorage("dash.inset.bottom") private var insetBottom = DashInset.defaultBottom
+    @AppStorage("dash.inset.left") private var insetLeft = DashInset.defaultLeft
 
     private static let navProtocol = "com.garmin.navilite.data"
+
+    /// Spelled out once, as a stored string: the rider reads a colour off the dash and reports it,
+    /// so the mapping from colour to position has to be on screen next to the button.
+    private static let bandLegend =
+        "Franjas de color, de fuera hacia dentro: " + DashProbe.bandNames.joined(separator: ", ")
+        + ". Cada una mide " + String(Int(DashProbe.band)) + " px. Dime la primera que se lee entera."
 
     var body: some View {
         NavigationView {
@@ -54,12 +63,59 @@ struct AccessoryDiagnostics: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                // Reaches the dash from this process, bypassing the extension entirely — the only
-                // way to answer the protocol questions while the extension can't be signed into
-                // launching. Puts a test card on the dash instead of the phone's screen.
+                // Adjustable while a broadcast is live: the dash's chrome is translucent, so how
+                // much image to give up to it is a judgement the rider makes looking at the dash.
+                // Travels as a Darwin notification because the extension can't read these settings
+                // (see DashInset) — which also means it reaches the *running* mirror instantly.
+                Section("Zona útil del tablero") {
+                    Text("Ajusta esto con la transmisión en marcha y mira el tablero.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                    Picker("Margen abajo", selection: $insetBottom) {
+                        ForEach(DashInset.bottomChoices, id: \.self) {
+                            Text($0 == 0 ? "sin margen" : "\($0) px")
+                        }
+                    }
+                    .onChange(of: insetBottom) { _ in postDarwinNotification(DashInset.bottomName(insetBottom)) }
+                    Picker("Margen izquierda", selection: $insetLeft) {
+                        ForEach(DashInset.leftChoices, id: \.self) {
+                            Text($0 == 0 ? "sin margen" : "\($0) px")
+                        }
+                    }
+                    .onChange(of: insetLeft) { _ in postDarwinNotification(DashInset.leftName(insetLeft)) }
+                    Button("Reenviar al capturador") {
+                        postDarwinNotification(DashInset.bottomName(insetBottom))
+                        postDarwinNotification(DashInset.leftName(insetLeft))
+                    }
+                    .font(.callout)
+                }
+                // Which of the optional setup messages to send. Each is a suspect for a piece of the
+                // dash's own chrome; only the bike can say which, so they are switches rather than a
+                // guess baked into a build that costs App IDs to reinstall.
+                Section("Mensajes del saludo") {
+                    Text("Apaga uno y vuelve a probar: sirve para averiguar cuál dibuja la franja "
+                         + "de «Carretera» y las flechas de zoom. Si el tablero se queda en negro, "
+                         + "ese mensaje hacía falta — vuelve a encenderlo.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                    Toggle("Zoom — flechas de la izquierda", isOn: $setup.zoom)
+                    Toggle("Carretera — franja de abajo", isOn: $setup.road)
+                    Toggle("Límite de velocidad", isOn: $setup.speedLimit)
+                    Toggle("Interruptor final", isOn: $setup.appSettingPost)
+                    Toggle("Estado de navegación", isOn: $setup.navStatus)
+                    Toggle("Día / noche", isOn: $setup.dayNight)
+                    Toggle("Casa y oficina", isOn: $setup.homeOffice)
+                    Toggle("GPS", isOn: $setup.gps)
+                }
+                // Reaches the dash from this process, bypassing the extension entirely — it puts an
+                // exact, known test card on the dash instead of whatever the phone is showing, which
+                // is what makes the overlay measurable. Only one EASession exists per protocol, so
+                // this and a live broadcast are mutually exclusive.
                 Section("Prueba directa con la moto") {
+                    Text("Para la transmisión antes: solo cabe una conexión a la vez.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                    Text(Self.bandLegend)
+                        .font(.footnote).foregroundStyle(.secondary)
                     Button {
-                        if probe.running { probe.stop() } else { probe.start() }
+                        if probe.running { probe.stop() } else { probe.start(setup) }
                     } label: {
                         HStack {
                             Text(probe.running ? "Detener prueba" : "Probar conexión con la moto")
@@ -169,6 +225,8 @@ struct AccessoryDiagnostics: View {
         } else {
             s += "CAPTURADOR: sin señal — no dijo nada.\n"
         }
+        s += "ZONA ÚTIL: abajo \(insetBottom) px, izquierda \(insetLeft) px\n"
+        s += "SALUDO: [\(setup.tags)]\n"
         if !probe.lines.isEmpty {
             s += "\nPRUEBA DIRECTA:\n" + probe.lines.map { "  \($0)" }.joined(separator: "\n") + "\n"
         }
