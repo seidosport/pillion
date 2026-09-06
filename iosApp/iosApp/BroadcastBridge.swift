@@ -15,6 +15,9 @@ enum DashSettings {
 final class BroadcastBridge: ObservableObject {
     let controller: BroadcastMirrorController        // NaviLite (Bluetooth / MFi via ReplayKit)
     let sdlController: SdlBroadcastController         // SDL (USB / iAP2)
+    /// Dash-only settings shown in the shared Settings screen. Kotlin remembers the values; putting
+    /// the banner on a running mirror is this side's job, since the Darwin channel lives here.
+    let dashExtras = IosDashExtras()
     private let sdlSession: SdlSession
     private weak var picker: RPSystemBroadcastPickerView?
 
@@ -35,13 +38,16 @@ final class BroadcastBridge: ObservableObject {
             }
         })
         controller.onToggle = { [weak self] in self?.triggerPicker() }
+        dashExtras.onSendBanner = { text in DashBanner.post(text) }
         self.sdlController.onStart = { [weak self] in self?.sdlSession.start() }
         self.sdlController.onStop = { [weak self] in self?.sdlSession.stop() }
         observeBroadcastState()
     }
 
     func makeViewController() -> UIViewController {
-        MainViewControllerKt.MainViewController(naviliteController: controller, sdlController: sdlController)
+        MainViewControllerKt.MainViewController(naviliteController: controller,
+                                                sdlController: sdlController,
+                                                dashExtras: dashExtras)
     }
 
     /// Called by `BroadcastPickerHost` once the (hidden) picker view exists.

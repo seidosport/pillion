@@ -5,6 +5,7 @@ import app.pillion.core.MirrorController
 import app.pillion.core.PreviewController
 import app.pillion.core.UnsupportedController
 import app.pillion.core.headunit.registerBuiltInHeadUnits
+import app.pillion.core.DashExtras
 import app.pillion.ios.IosSettingsStore
 import app.pillion.ui.App
 import platform.UIKit.UIViewController
@@ -18,6 +19,7 @@ import platform.UIKit.UIViewController
 fun MainViewController(
     naviliteController: MirrorController,
     sdlController: MirrorController?,
+    dashExtras: DashExtras?,
 ): UIViewController {
     registerBuiltInHeadUnits()
     return ComposeUIViewController {
@@ -31,6 +33,7 @@ fun MainViewController(
             },
             updateChecker = null,
             settingsStore = IosSettingsStore(),
+            dashExtras = dashExtras,
         )
     }
 }

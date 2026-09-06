@@ -10,6 +10,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.LocalUriHandler
 import app.pillion.core.AppInfo
+import app.pillion.core.DashExtras
 import app.pillion.core.DashSetup
 import app.pillion.core.DashResolution
 import app.pillion.core.MirrorController
@@ -35,6 +36,7 @@ fun App(
     updateChecker: UpdateChecker? = null,
     settingsStore: SettingsStore? = null,
     dashSetup: DashSetup? = null,
+    dashExtras: DashExtras? = null,
 ) {
     var themeMode by remember { mutableStateOf(settingsStore?.themeMode() ?: ThemeMode.SYSTEM) }
     PillionTheme(themeMode) {
@@ -100,6 +102,7 @@ fun App(
                 onDisableDash = { dashEnabled = false; settingsStore?.setDashEnabled(false) },
                 bikeName = profile.displayName,
                 onChangeBike = { showSettings = false; changingBike = true; selectedBikeId = null },
+                dashExtras = dashExtras,
                 update = update,
                 onBack = { showSettings = false },
             )

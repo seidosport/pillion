@@ -31,11 +31,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -52,6 +54,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.pillion.core.AppInfo
+import app.pillion.core.DashExtras
 import app.pillion.core.DashResolution
 import app.pillion.core.ThemeMode
 import app.pillion.core.UpdateInfo
@@ -77,6 +80,7 @@ internal fun SettingsScreen(
     onDisableDash: () -> Unit = {},
     bikeName: String = "",
     onChangeBike: () -> Unit = {},
+    dashExtras: DashExtras? = null,
     update: UpdateInfo?,
     onBack: () -> Unit,
 ) {
@@ -239,6 +243,20 @@ internal fun SettingsScreen(
             )
         }
 
+        if (dashExtras != null) {
+            Spacer(Modifier.height(24.dp))
+            SectionHeader("Dash")
+            DashExtrasGroup(dashExtras)
+            Text(
+                "The dash always draws a banner across the bottom of its screen and there is no " +
+                    "turning it off, so put your own words in it. Opening the nav app saves a tap " +
+                    "when you start; the phone still has to be turned to landscape by hand.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 6.dp, top = 8.dp, end = 6.dp),
+            )
+        }
+
         Spacer(Modifier.height(24.dp))
         SectionHeader("About")
         SettingsGroup {
@@ -254,6 +272,60 @@ internal fun SettingsScreen(
         Spacer(Modifier.height(28.dp))
         MadeByCredit { uriHandler.openUri("https://github.com/alexandrevega") }
         Spacer(Modifier.height(16.dp))
+    }
+}
+
+/**
+ * The two dash-only settings. State is held here rather than hoisted into [App] because nothing
+ * else in the app reads either one: the banner text is remembered by the platform side and picked
+ * up by the mirror when it starts, and the nav-app switch is read at that same moment.
+ */
+@Composable
+private fun DashExtrasGroup(extras: DashExtras) {
+    var banner by remember { mutableStateOf(extras.bannerText()) }
+    var launchNav by remember { mutableStateOf(extras.launchNavApp()) }
+
+    SettingsGroup {
+        Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
+            OutlinedTextField(
+                value = banner,
+                onValueChange = {
+                    // Trimmed to what the wire field takes; the dash shows fewer than that anyway.
+                    banner = it.take(40)
+                    extras.setBannerText(banner)
+                },
+                label = { Text("Text on the dash banner") },
+                placeholder = { Text("PILLION") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(10.dp))
+            Button(
+                onClick = { extras.sendBanner() },
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Show it on the dash", fontWeight = FontWeight.SemiBold)
+            }
+        }
+        GroupDivider()
+        Row(
+            Modifier.fillMaxWidth().padding(vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Open Waze when mirroring starts", style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    "Straight to navigation, no tap needed",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(
+                checked = launchNav,
+                onCheckedChange = { launchNav = it; extras.setLaunchNavApp(it) },
+            )
+        }
     }
 }
 

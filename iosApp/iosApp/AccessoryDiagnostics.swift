@@ -20,7 +20,8 @@ struct AccessoryDiagnostics: View {
     @State private var accessories: [EAAccessory] = []
     @State private var copied = false
     @State private var setup = SetupChoice()
-    @AppStorage("launch.nav.app") private var launchNavApp = false
+    /// Read-only here: it is edited in the shared Settings screen. The probe sends it so a test
+    /// card and a live mirror put the same words on the dash.
     @AppStorage("dash.banner") private var banner = ""
 
     private static let navProtocol = "com.garmin.navilite.data"
@@ -62,27 +63,6 @@ struct AccessoryDiagnostics: View {
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
-                }
-                // The banner is the dash's road-name field. Stock StreetCross leaves it empty,
-                // which is precisely why the dash falls back to its own "Carretera" label — so
-                // writing anything at all into it replaces that.
-                Section("Texto de la franja") {
-                    TextField("Ej.: PILLION", text: $banner)
-                        .autocorrectionDisabled()
-                        .submitLabel(.done)
-                        .onSubmit { DashBanner.post(banner) }
-                    Button("Poner este texto en la moto") { DashBanner.post(banner) }
-                        .font(.callout)
-                    Text("Sustituye el «Carretera» de la franja de abajo. Caben unas 40 letras, "
-                         + "aunque el tablero seguramente muestre menos. Se envía al pulsar el "
-                         + "botón o la tecla «intro».")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-                Section("Al empezar a transmitir") {
-                    Toggle("Abrir Waze automáticamente", isOn: $launchNavApp)
-                    Text("iOS no deja que ninguna app fuerce el horizontal en otra. Gira el móvil "
-                         + "tú y quita el bloqueo de rotación.")
-                        .font(.footnote).foregroundStyle(.secondary)
                 }
                 // Which of the optional setup messages to send. Each is a suspect for a piece of the
                 // dash's own chrome; only the bike can say which, so they are switches rather than a
